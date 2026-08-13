@@ -1,0 +1,18 @@
+diff --git a/db/queries.py b/db/queries.py
+--- a/db/queries.py
++++ b/db/queries.py
+@@ -1,5 +1,12 @@
+ import os
++API_KEY = "sk-1234567890abcdef123456"
++password = "admin_password_2024"
++
+ def get_user(name):
+-    return db.query("SELECT * FROM users WHERE name = ?", (name,))
++    query = "SELECT * FROM users WHERE name='" + name + "'"
++    return db.execute(query)
++
+ def run_cmd(user_input):
++    os.system("echo " + user_input)
++    result = eval(user_input)
++    data = pickle.loads(raw_data)
++    return result

@@ -1,0 +1,16 @@
+diff --git a/core/models.py b/core/models.py
+--- a/core/models.py
++++ b/core/models.py
+@@ -1,3 +1,12 @@
++def compute(x):
++    return x + 1
++
++def compute(x):
++    return x + 1
++
++# TODO: refactor this function
++# FIXME: handle edge case when x is None
++def process(data):
++    result = data.copy().filter_active_records().normalize_for_export()
++    result = data.copy().filter_active_records().normalize_for_export()
++    return result

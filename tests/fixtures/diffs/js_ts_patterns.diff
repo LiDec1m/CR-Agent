@@ -1,0 +1,15 @@
+diff --git a/frontend/app.js b/frontend/app.js
+--- a/frontend/app.js
++++ b/frontend/app.js
+@@ -5,3 +5,12 @@ function init() {
++    var apiKey = "js-secret-key-12345678";
++    var query = "SELECT * FROM users WHERE name='" + userName + "'";
++    eval(userInput);
++    const password = "hardcoded_pwd_9999"
+diff --git a/components/Button.tsx b/components/Button.tsx
+--- a/components/Button.tsx
++++ b/components/Button.tsx
+@@ -10,3 +10,7 @@ export const Button = () => {
++    const token = "ts-token-abcdef123456";
++    eval(props.data);
++    return null;

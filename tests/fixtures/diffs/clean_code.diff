@@ -1,0 +1,20 @@
+diff --git a/clean/safe_code.py b/clean/safe_code.py
+--- a/clean/safe_code.py
++++ b/clean/safe_code.py
+@@ -0,0 +1,15 @@
++"""Safe code module with no risk patterns."""
++
++
++def calculate_total(price: int, quantity: int) -> int:
++    """Calculate the total price for given quantity.
++
++    Args:
++        price: Unit price.
++        quantity: Number of items.
++
++    Returns:
++        Total price.
++    """
++    if price < 0 or quantity < 0:
++        raise ValueError("Values must be positive")
++    return price * quantity
