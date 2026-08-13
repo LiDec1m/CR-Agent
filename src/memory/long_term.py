@@ -49,6 +49,106 @@ class LongTermMemory:
         conn.close()
         return [dict(r) for r in rows]
 
+    def get_feedback_by_rules(
+        self,
+        file_pattern: str,
+        rule_ids: list[str] | None = None,
+    ) -> list[dict]:
+        """Retrieve feedback filtered by file pattern and optionally by rule_ids.
+
+        When rule_ids is provided, returns feedback matching the file pattern
+        that also has a matching rule_id (or NULL rule_id for file-level feedback).
+        This enables rule-granularity association: instead of returning all
+        feedback for a file, only return feedback relevant to the rules being
+        considered.
+        """
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        glob_pattern = file_pattern.replace("*", "%")
+
+        if rule_ids:
+            # Match feedback that either has no rule_id (file-level) or
+            # matches one of the specified rule_ids
+            placeholders = ",".join("?" for _ in rule_ids)
+            sql = (
+                f"SELECT * FROM feedback "
+                f"WHERE file_pattern LIKE ? "
+                f"AND (rule_id IS NULL OR rule_id IN ({placeholders}))"
+            )
+            params = [glob_pattern] + rule_ids
+            rows = conn.execute(sql, params).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM feedback WHERE file_pattern LIKE ?",
+                (glob_pattern,),
+            ).fetchall()
+
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_feedback_by_rule_across_files(
+        self,
+        rule_ids: list[str],
+        exclude_file_pattern: str | None = None,
+    ) -> list[dict]:
+        """Retrieve feedback by rule_id across ALL files.
+
+        This solves the cross-file feedback problem: if SEC001 was a
+        false_positive for judge.py, the same feedback should also
+        inform analysis of tool_router.py when SEC001 is triggered.
+
+        Args:
+            rule_ids: Rule IDs to match.
+            exclude_file_pattern: Optionally exclude feedback from this
+                file pattern to avoid duplication (since file-specific
+                feedback is already fetched via get_feedback_by_rules).
+        """
+        if not rule_ids:
+            return []
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        placeholders = ",".join("?" for _ in rule_ids)
+        sql = (
+            f"SELECT * FROM feedback "
+            f"WHERE rule_id IN ({placeholders})"
+        )
+        params: list = list(rule_ids)
+        if exclude_file_pattern:
+            glob_pattern = exclude_file_pattern.replace("*", "%")
+            sql += " AND file_pattern NOT LIKE ?"
+            params.append(glob_pattern)
+        rows = conn.execute(sql, params).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def get_cross_file_feedback(
+        self,
+        exclude_file_pattern: str | None = None,
+    ) -> list[dict]:
+        """Retrieve all feedback from OTHER files (no rule_id filter).
+
+        Unlike get_feedback_by_rule_across_files which filters by specific
+        rule_ids, this method returns ALL feedback from other files that
+        has a rule_id set. This is used at the Planner stage where we don't
+        yet know which rules will be triggered—we just want all prior
+        feedback from other files as context.
+
+        Args:
+            exclude_file_pattern: Exclude feedback from this file pattern
+                to avoid duplication with file-specific feedback.
+        """
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        sql = "SELECT * FROM feedback WHERE rule_id IS NOT NULL"
+        params: list = []
+        if exclude_file_pattern:
+            glob_pattern = exclude_file_pattern.replace("*", "%")
+            sql += " AND file_pattern NOT LIKE ?"
+            params.append(glob_pattern)
+        rows = conn.execute(sql, params).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
     def get_all_feedback(self) -> list[dict]:
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row

@@ -48,6 +48,31 @@ class SecurityKnowledgeLoader:
         finally:
             conn.close()
 
+    def clear(self) -> None:
+        """Clear all security knowledge entries (table + FTS index)."""
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute("DELETE FROM security_knowledge_fts")
+            conn.execute("DELETE FROM security_knowledge")
+            conn.execute(
+                "DELETE FROM sqlite_sequence WHERE name='security_knowledge'"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def reload_from_json(
+        self,
+        json_path: str,
+        embedding_client: Any | None = None,
+    ) -> int:
+        """Clear existing entries and reload from a JSON file.
+
+        Returns the number of entries inserted.
+        """
+        self.clear()
+        return self.load_from_json(json_path, embedding_client)
+
     def load_from_json(
         self,
         json_path: str,
@@ -118,6 +143,22 @@ class CodebaseIndexer:
     """Index Python source files into the codebase_index table.
 
     Uses ``ast`` to extract function and class symbols.
+
+    TODO: Multi-language AST support.
+      Currently only Python files are supported via the stdlib ``ast`` module.
+      To support JS/TS/Java/Go, introduce a pluggable parser interface:
+
+      1. Replace ``ast.parse()`` with a ``LanguageParser`` abstraction that
+         delegates to ``tree-sitter`` (supports 30+ languages) or
+         ``libcst`` (precise Python/JS CST).
+      2. Map language-specific AST node types:
+         - Python: ``ast.FunctionDef`` / ``ast.ClassDef``
+         - JS/TS: ``FunctionDeclaration`` / ``ClassDeclaration``
+         - Java: ``MethodDeclaration`` / ``ClassDeclaration``
+         - Go: ``FunctionDecl`` / ``TypeDeclaration``
+      3. Update ``_extract_imports()`` to handle each language's import syntax
+         (e.g. JS ``import/require``, Java ``import``, Go ``import``).
+      4. Update ``cr-agent index`` CLI to walk non-``.py`` files.
     """
 
     def __init__(self, db_path: str, embedding_client: Any) -> None:
@@ -138,7 +179,6 @@ class CodebaseIndexer:
                     line_range TEXT,
                     content TEXT,
                     imports TEXT,
-                    imported_by TEXT,
                     embedding TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -156,6 +196,171 @@ class CodebaseIndexer:
             conn.commit()
         finally:
             conn.close()
+
+    def clear_index(self) -> None:
+        """Clear all codebase index entries (table + FTS index).
+
+        Call this before re-indexing an entire codebase to avoid duplicates.
+        Use ``delete_by_file()`` instead if you only want to re-index specific
+        files while keeping the rest of the index intact.
+        """
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute("DELETE FROM codebase_index_fts")
+            conn.execute("DELETE FROM codebase_index")
+            conn.execute(
+                "DELETE FROM sqlite_sequence WHERE name='codebase_index'"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def delete_by_file(self, file_path: str) -> int:
+        """Delete all index entries for a specific file.
+
+        Use this before re-indexing a single file to avoid duplicates,
+        while preserving the rest of the index. Returns the number of
+        records deleted.
+        """
+        conn = sqlite3.connect(self._db_path)
+        try:
+            # Get rowids to delete from FTS table too
+            rowids = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT id FROM codebase_index WHERE file_path = ?",
+                    (file_path,),
+                ).fetchall()
+            ]
+            if not rowids:
+                return 0
+            placeholders = ",".join("?" for _ in rowids)
+            conn.execute(
+                f"DELETE FROM codebase_index_fts "
+                f"WHERE rowid IN ({placeholders})",
+                rowids,
+            )
+            conn.execute(
+                "DELETE FROM codebase_index WHERE file_path = ?",
+                (file_path,),
+            )
+            conn.commit()
+            return len(rowids)
+        finally:
+            conn.close()
+
+    def resolve_imports(self) -> int:
+        """Resolve direct imports to file paths and populate resolved_imports.
+
+        Iterates all indexed files, resolves their direct imports to file
+        paths, and writes the resolved paths to the ``resolved_imports``
+        field so that ``search_codebase`` can use them directly without
+        re-resolving at query time.
+
+        Only handles direct absolute imports (e.g. ``src.rag.retriever``).
+        Relative imports (``from . import x``), aliased imports
+        (``import x as y``), and star imports are not resolved.
+
+        Returns the number of resolved import links.
+        """
+        conn = sqlite3.connect(self._db_path)
+        try:
+            indexed_paths = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT DISTINCT file_path FROM codebase_index"
+                ).fetchall()
+            }
+
+            resolved_map: dict[int, list[str]] = {}
+            links = 0
+
+            for row in conn.execute(
+                "SELECT id, file_path, imports FROM codebase_index"
+            ).fetchall():
+                rid = row[0]
+                importer_path = row[1]
+                imports_str = row[2]
+                if not imports_str:
+                    continue
+                try:
+                    imports_list = json.loads(imports_str)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                resolved_list: list[str] = []
+                for imp in imports_list:
+                    resolved = self._resolve_import_to_path(imp, indexed_paths)
+                    if resolved and resolved != importer_path:
+                        resolved_list.append(resolved)
+                        links += 1
+
+                if resolved_list:
+                    resolved_map[rid] = resolved_list
+
+            self._ensure_resolved_imports_column(conn)
+
+            for rid, resolved_list in resolved_map.items():
+                conn.execute(
+                    "UPDATE codebase_index SET resolved_imports = ? "
+                    "WHERE id = ?",
+                    (json.dumps(resolved_list), rid),
+                )
+            for row in conn.execute(
+                "SELECT id FROM codebase_index WHERE resolved_imports IS NULL"
+            ).fetchall():
+                conn.execute(
+                    "UPDATE codebase_index SET resolved_imports = '[]' "
+                    "WHERE id = ?",
+                    (row[0],),
+                )
+
+            conn.commit()
+            return links
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _ensure_resolved_imports_column(conn: sqlite3.Connection) -> None:
+        """Add resolved_imports column if it doesn't exist."""
+        try:
+            conn.execute(
+                "ALTER TABLE codebase_index "
+                "ADD COLUMN resolved_imports TEXT DEFAULT '[]'"
+            )
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
+
+    @staticmethod
+    def _resolve_import_to_path(
+        module_path: str, indexed_paths: set[str]
+    ) -> str | None:
+        """Resolve a Python import path to an indexed file path.
+
+        Handles ``src.rag.retriever`` → ``src/rag/retriever.py``.
+        Also handles ``from src.rag.retriever import RAGRetriever``
+        by stripping the last component if no direct match is found.
+        Returns None if no match is found in indexed_paths.
+        """
+        if not module_path:
+            return None
+
+        # Convert dotted path to file path
+        file_path = module_path.replace(".", "/") + ".py"
+
+        if file_path in indexed_paths:
+            return file_path
+
+        # Try stripping the last component (e.g. src.rag.retriever.RAGRetriever
+        # → src.rag.retriever → src/rag/retriever.py)
+        parts = module_path.rsplit(".", 1)
+        if len(parts) == 2:
+            parent_path = parts[0].replace(".", "/") + ".py"
+            if parent_path in indexed_paths:
+                return parent_path
+
+        return None
 
     def index_file(self, file_path: str, content: str) -> int:
         """Parse a Python file and index its symbols.
@@ -206,8 +411,8 @@ class CodebaseIndexer:
                     """
                     INSERT INTO codebase_index
                         (file_path, symbol_name, symbol_type, line_range,
-                         content, imports, imported_by, embedding, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         content, imports, embedding, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         file_path,
@@ -216,7 +421,6 @@ class CodebaseIndexer:
                         line_range,
                         sym_content,
                         imports_str,
-                        "[]",  # imported_by — populated later by cross-reference
                         embedding_str,
                         created_at,
                     ),
@@ -325,8 +529,8 @@ class CodebaseIndexer:
                     """
                     INSERT INTO codebase_index
                         (file_path, symbol_name, symbol_type, line_range,
-                         content, imports, imported_by, embedding, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         content, imports, embedding, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         file_path,
@@ -335,7 +539,6 @@ class CodebaseIndexer:
                         line_range,
                         sym_content,
                         imports_str,
-                        "[]",
                         embedding_str,
                         created_at,
                     ),

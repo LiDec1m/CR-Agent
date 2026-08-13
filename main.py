@@ -279,7 +279,8 @@ def feedback(thread_id, file_pattern, rule_id, feedback_type, content):
 
 @cli.command()
 @click.option("--repo-path", required=True, help="Path to the repository to index.")
-def index(repo_path):
+@click.option("--clear", is_flag=True, default=False, help="Clear entire index before re-indexing.")
+def index(repo_path, clear):
     """Index a codebase for RAG codebase search."""
     if not os.path.isdir(repo_path):
         console.print(f"[red]Directory not found: {repo_path}[/red]")
@@ -293,6 +294,10 @@ def index(repo_path):
     )
     indexer = CodebaseIndexer(db_path, embedding_client)
     indexer.init_tables()
+
+    if clear:
+        indexer.clear_index()
+        console.print("[dim]Cleared entire codebase index.[/dim]")
 
     total_symbols = 0
     total_files = 0
@@ -311,12 +316,22 @@ def index(repo_path):
                 with open(fpath, encoding="utf-8") as f:
                     content = f.read()
                 rel_path = os.path.relpath(fpath, repo_path)
+
+                # Delete old records for this file to avoid duplicates
+                deleted = indexer.delete_by_file(rel_path)
+                if deleted:
+                    console.print(f"  [dim]Removed {deleted} old record(s) for {rel_path}[/dim]")
+
                 count = indexer.index_file_full(rel_path, content)
                 total_symbols += count
                 total_files += 1
                 console.print(f"  [green]Indexed[/green] {rel_path} ({count} symbol(s))")
             except Exception as exc:
                 console.print(f"  [red]Failed[/red] {fpath}: {exc}")
+
+    # Resolve cross-file import paths for search_codebase
+    cross_refs = indexer.resolve_imports()
+    console.print(f"[dim]Resolved {cross_refs} cross-file import reference(s).[/dim]")
 
     console.print(
         Panel(

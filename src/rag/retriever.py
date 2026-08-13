@@ -84,7 +84,6 @@ class RAGRetriever:
                     line_range TEXT,
                     content TEXT,
                     imports TEXT,
-                    imported_by TEXT,
                     embedding TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -225,7 +224,6 @@ class RAGRetriever:
         line_range: str,
         content: str,
         imports: list[str],
-        imported_by: list[str],
         embedding: list[float] | None = None,
     ) -> None:
         """Insert a codebase-index record."""
@@ -235,7 +233,6 @@ class RAGRetriever:
             )
         embedding_str = json.dumps(embedding)
         imports_str = json.dumps(imports)
-        imported_by_str = json.dumps(imported_by)
         created_at = datetime.now(timezone.utc).isoformat()
 
         conn = sqlite3.connect(self._db_path)
@@ -244,7 +241,7 @@ class RAGRetriever:
                 """
                 INSERT INTO codebase_index
                     (file_path, symbol_name, symbol_type, line_range, content,
-                     imports, imported_by, embedding, created_at)
+                     imports, embedding, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -254,7 +251,7 @@ class RAGRetriever:
                     line_range,
                     content,
                     imports_str,
-                    imported_by_str,
+                    imports_str,
                     embedding_str,
                     created_at,
                 ),
@@ -324,7 +321,14 @@ class RAGRetriever:
         file_path: str,
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
-        """FTS5 search codebase index by file path / symbol keywords."""
+        """FTS5 search codebase index by file path / symbol keywords.
+
+        Also resolves cross-file dependencies: after fetching symbols from
+        the diff file, it looks at each result's ``imports`` list, resolves
+        those import paths to indexed file paths, and fetches symbols from
+        those referenced files. This provides context about functions that
+        the diff file calls but that are defined elsewhere.
+        """
         conn = sqlite3.connect(self._db_path)
         try:
             # Build FTS5 query from file_path components
@@ -335,7 +339,7 @@ class RAGRetriever:
             rows = conn.execute(
                 """
                 SELECT c.id, c.file_path, c.symbol_name, c.symbol_type,
-                       c.line_range, c.content, c.imports, c.imported_by
+                       c.line_range, c.content, c.imports
                 FROM codebase_index_fts f
                 JOIN codebase_index c ON c.id = f.rowid
                 WHERE codebase_index_fts MATCH ?
@@ -346,22 +350,152 @@ class RAGRetriever:
             ).fetchall()
 
             results: list[dict[str, Any]] = []
+            seen_ids: set[int] = set()
+            cross_file_paths: set[str] = set()
+
             for row in rows:
+                rid = row[0]
+                seen_ids.add(rid)
+                imports_list = json.loads(row[6]) if row[6] else []
+
+                # Use resolved_imports if available (populated by
+                # populate_imported_by during indexing), otherwise
+                # fall back to resolving imports at query time
+                resolved_imports = self._get_resolved_imports(conn, rid)
+                if resolved_imports:
+                    cross_file_paths.update(resolved_imports)
+                else:
+                    for imp in imports_list:
+                        resolved = self._resolve_import_path(imp, conn)
+                        if resolved:
+                            cross_file_paths.add(resolved)
+
                 results.append(
                     {
-                        "id": row[0],
+                        "id": rid,
+                        "file_path": row[1],
+                        "symbol_name": row[2],
+                        "symbol_type": row[3],
+                        "line_range": row[4],
+                        "content": row[5],
+                        "imports": imports_list,
+                        "source": "diff_file",
+                    }
+                )
+
+            # Cross-file lookup: fetch symbols from referenced files
+            # that are NOT already in the diff file's results
+            if cross_file_paths:
+                cross_results = self._fetch_cross_file_symbols(
+                    conn, cross_file_paths, seen_ids, top_k
+                )
+                results.extend(cross_results)
+
+            return results
+        finally:
+            conn.close()
+
+    def _get_resolved_imports(
+        self, conn: sqlite3.Connection, row_id: int
+    ) -> list[str] | None:
+        """Read pre-resolved import paths from the resolved_imports column.
+
+        Returns None if the column doesn't exist or the value is NULL,
+        so the caller can fall back to runtime resolution.
+        """
+        try:
+            row = conn.execute(
+                "SELECT resolved_imports FROM codebase_index WHERE id = ?",
+                (row_id,),
+            ).fetchone()
+            if row and row[0]:
+                return json.loads(row[0])
+        except sqlite3.OperationalError:
+            # Column doesn't exist yet (pre-migration database)
+            pass
+        return None
+
+    def _resolve_import_path(
+        self, module_path: str, conn: sqlite3.Connection
+    ) -> str | None:
+        """Resolve a Python import path to an indexed file path.
+
+        e.g. ``src.rag.retriever`` → ``src/rag/retriever.py``
+        Returns None if not found in the codebase index.
+        """
+        if not module_path:
+            return None
+
+        # Convert dotted path to file path
+        file_path = module_path.replace(".", "/") + ".py"
+
+        row = conn.execute(
+            "SELECT file_path FROM codebase_index "
+            "WHERE file_path = ? LIMIT 1",
+            (file_path,),
+        ).fetchone()
+        if row:
+            return row[0]
+
+        # Try stripping the last component (e.g. src.rag.retriever.RAGRetriever
+        # → src.rag.retriever → src/rag/retriever.py)
+        parts = module_path.rsplit(".", 1)
+        if len(parts) == 2:
+            parent_path = parts[0].replace(".", "/") + ".py"
+            row = conn.execute(
+                "SELECT file_path FROM codebase_index "
+                "WHERE file_path = ? LIMIT 1",
+                (parent_path,),
+            ).fetchone()
+            if row:
+                return row[0]
+
+        return None
+
+    def _fetch_cross_file_symbols(
+        self,
+        conn: sqlite3.Connection,
+        file_paths: set[str],
+        seen_ids: set[int],
+        top_k: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch symbols from cross-referenced files.
+
+        These are symbols from files that the diff file imports,
+        providing context about called functions defined elsewhere.
+        """
+        results: list[dict[str, Any]] = []
+        for fp in file_paths:
+            rows = conn.execute(
+                """
+                SELECT id, file_path, symbol_name, symbol_type,
+                       line_range, content, imports
+                FROM codebase_index
+                WHERE file_path = ?
+                ORDER BY id
+                LIMIT ?
+                """,
+                (fp, top_k),
+            ).fetchall()
+
+            for row in rows:
+                rid = row[0]
+                if rid in seen_ids:
+                    continue
+                seen_ids.add(rid)
+                results.append(
+                    {
+                        "id": rid,
                         "file_path": row[1],
                         "symbol_name": row[2],
                         "symbol_type": row[3],
                         "line_range": row[4],
                         "content": row[5],
                         "imports": json.loads(row[6]) if row[6] else [],
-                        "imported_by": json.loads(row[7]) if row[7] else [],
+                        "source": "cross_file",
                     }
                 )
-            return results
-        finally:
-            conn.close()
+        return results
 
     # ------------------------------------------------------------------
     # Embedding search helpers

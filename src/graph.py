@@ -69,7 +69,7 @@ def build_graph(
     planner = PlannerNode(llm, rag, ltm)
     tool_router = ToolRouterNode(registry, rag)
     judge = JudgeNode(llm, rag)
-    reflection = ReflectionNode(llm, max_rounds=max_rounds)
+    reflection = ReflectionNode(llm, ltm=ltm, max_rounds=max_rounds)
 
     # -- Node wrappers: accept dict, convert to AgentState, return dict --
 

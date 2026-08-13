@@ -22,17 +22,28 @@ class PlannerNode:
     def __call__(self, state: AgentState) -> dict:
         feedback: list[str] = []
         history: list[dict] = []
+
         for hunk in state.hunks:
             try:
-                for item in self.ltm.get_feedback(hunk.file_path):
+                file_feedback = self.ltm.get_feedback(hunk.file_path)
+                for item in file_feedback:
+                    rule_id = item.get("rule_id") or "general"
+                    fb_type = item.get("feedback_type", "")
                     content = item.get("feedback_content", str(item))
-                    feedback.append(f"{hunk.file_path}: {content}")
+                    feedback.append(
+                        f"[{rule_id}/{fb_type}] {hunk.file_path}: {content}"
+                    )
             except Exception:
                 pass
             try:
                 history.extend(self.rag.search_history(hunk.added_code, hunk.file_path))
             except Exception:
                 pass
+
+        # Note: Cross-file feedback (feedback from OTHER files for the
+        # same rules) is fetched in the Reflection node, not here, because
+        # at the Planner stage we don't yet know which rules will be
+        # triggered. Reflection has state.rules_executed to filter by.
 
         changed_code = "\n\n".join(
             f"File: {hunk.file_path}\n{hunk.added_code}" for hunk in state.hunks
