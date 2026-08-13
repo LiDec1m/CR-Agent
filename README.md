@@ -39,9 +39,9 @@ python main.py index --repo-path /path/to/repo
 START → Planner → Tool Router → Judge → Reflection → END
           ↑           ↑          ↑            │
         RAG检索     RAG检索     RAG检索     needs_more?
-        (历史风险)  (代码上下文) (安全知识)       │
-                         ↑                   └── yes ──┐
-                         └────────────────── no ───────┘
+        (历史风险)  (代码上下文) (安全知识)     │
+                         ↑                 └─ yes ─┐
+                         └─────────────────────────┘
 ```
 
 ### 四个节点
