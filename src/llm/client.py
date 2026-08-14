@@ -27,7 +27,7 @@ class LLMClient:
         kwargs: dict = {
             "model": self._model,
             "messages": messages,
-            "max_tokens": 4096,
+            "max_tokens": 8192,
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
