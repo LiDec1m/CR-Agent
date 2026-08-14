@@ -10,4 +10,7 @@ from src.rules import style  # noqa: F401
 from src.rules import performance  # noqa: F401
 from src.rules import maintainability  # noqa: F401
 
+# llm_assisted is NOT auto-registered here because it needs an LLM client.
+# It is registered dynamically in main.py's _init_components().
+
 __all__ = ["ToolRegistry", "registry"]

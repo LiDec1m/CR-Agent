@@ -48,6 +48,11 @@ class PlannerNode:
         changed_code = "\n\n".join(
             f"File: {hunk.file_path}\n{hunk.added_code}" for hunk in state.hunks
         )
+        # Exclude llm_assisted from the initial plan — it should only
+        # be triggered by Reflection when deterministic coverage is
+        # insufficient, never in the first round.
+        available_rules = [r for r in registry.list_all() if r != "llm_assisted"]
+
         prompt = (
             "Analyze this code change and select relevant analysis rules. "
             "Return JSON only: {\"summary\": str, \"plan\": [str], "
@@ -55,7 +60,7 @@ class PlannerNode:
             f"Changed code:\n{changed_code}\n\n"
             f"Long-term feedback:\n{json.dumps(feedback)}\n\n"
             f"Historical risks:\n{json.dumps(history)}\n\n"
-            f"Available rules:\n{json.dumps(registry.list_all())}"
+            f"Available rules:\n{json.dumps(available_rules)}"
         )
         try:
             response = json.loads(self.llm.chat("You are a code risk planner.", prompt))

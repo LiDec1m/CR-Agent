@@ -74,6 +74,13 @@ def _init_components():
                 "[dim]Loaded security knowledge from data/security_knowledge.json[/dim]"
             )
 
+    # Register LLM-assisted rule (needs LLM client, so can't be done at
+    # import time). This rule is only triggered by Reflection when
+    # deterministic rules have insufficient coverage.
+    from src.rules.llm_assisted import create_llm_assisted_rule
+    if "llm_assisted" not in registry.list_all():
+        registry.register("llm_assisted", create_llm_assisted_rule(llm))
+
     return llm, rag, ltm, registry
 
 
