@@ -105,17 +105,36 @@ class ReflectionNode:
             reason = "Unable to parse reflection response."
             coverage_assessment = "unknown"
 
-        # Boundary guard: this is the last allowed round. Even if the LLM
-        # wants more analysis, the routing condition
-        # (reflection_round < max_rounds) will not send us back to
-        # tool_router — so report the intention to stop instead of
-        # requesting a loop that cannot happen.
-        if new_round >= self.max_rounds and needs_more_analysis:
-            needs_more_analysis = False
-            reason = (
-                f"Max reflection rounds ({self.max_rounds}) reached; "
-                f"finalizing. Last assessment: {reason}"
-            )
+        # Anti-idle-loop validation: a round-trip to tool_router is only
+        # useful if it will execute at least one rule that has NOT run
+        # yet (valid name + not already executed). Otherwise the next
+        # round would collect zero new evidence and burn an LLM round
+        # for nothing — finalize instead.
+        hit_round_cap = False
+        if needs_more_analysis:
+            available = set(registry.list_all())
+            new_tools = [
+                t for t in (additional_tools_needed or [])
+                if t in available and t not in state.rules_executed
+            ]
+            if not new_tools:
+                needs_more_analysis = False
+                additional_tools_needed = []
+                reason = (
+                    f"Finalizing: suggested tools contain no new rules to "
+                    f"execute (already run or unknown). Last assessment: "
+                    f"{reason}"
+                )
+            else:
+                additional_tools_needed = new_tools
+                if new_round >= self.max_rounds:
+                    # Observation marker, NOT a behaviour override: the LLM
+                    # still believes coverage is insufficient, but the
+                    # routing condition (reflection_round < max_rounds)
+                    # will send the graph to reporter. needs_more_analysis
+                    # keeps its true value so callers can measure how many
+                    # diffs were under-analysed at the round cap.
+                    hit_round_cap = True
 
         notes = list(state.reflection_notes)
         notes.append(
@@ -124,12 +143,14 @@ class ReflectionNode:
         if not needs_more_analysis:
             return {
                 "needs_more_analysis": False,
+                "hit_reflection_cap": hit_round_cap,
                 "phase": AgentPhase.DONE,
                 "reflection_round": new_round,
                 "reflection_notes": notes,
             }
         return {
             "needs_more_analysis": True,
+            "hit_reflection_cap": hit_round_cap,
             "additional_tools_needed": additional_tools_needed,
             "phase": AgentPhase.TOOL_ROUTING,
             "reflection_round": new_round,

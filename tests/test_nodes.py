@@ -135,31 +135,33 @@ def test_reflection_node_max_rounds():
     mock_llm.chat.assert_not_called()
 
 
-def test_reflection_final_round_forces_stop():
-    """At the final allowed round, even if the LLM wants more analysis,
-    the node must report needs_more=False (routing would not loop back).
-    Report construction is ReporterNode's job, not Reflection's."""
+def test_reflection_final_round_preserves_observation():
+    """At the final allowed round, the LLM's true verdict is preserved
+    (needs_more stays True + hit_reflection_cap marker) for observability;
+    the routing condition sends the graph to reporter regardless, so the
+    report is still produced. Anti-idle: only if NEW rules are suggested."""
     mock_llm = MagicMock()
     mock_llm.chat_json.return_value = dict({
         "needs_more_analysis": True,
-        "additional_tools_needed": ["llm_assisted"],
+        "additional_tools_needed": ["unused_import"],  # not yet executed
         "reason": "Coverage still incomplete",
         "coverage_assessment": "60%",
     })
     node = ReflectionNode(mock_llm, max_rounds=3)
     state = AgentState(reflection_round=2)  # next round = 3 == max_rounds
     result = node(state)
-    assert result["needs_more_analysis"] is False
+    assert result["needs_more_analysis"] is True  # preserved, not overridden
+    assert result["hit_reflection_cap"] is True   # observability marker
     assert "report" not in result  # reporter builds it downstream
-    assert "Max reflection rounds" in result["reflection_notes"][-1]
 
 
 def test_reflection_non_final_round_still_loops():
-    """Before the final round, a 'need more' verdict must still loop."""
+    """Before the final round, a 'need more' verdict with NEW rules
+    must still loop."""
     mock_llm = MagicMock()
     mock_llm.chat_json.return_value = dict({
         "needs_more_analysis": True,
-        "additional_tools_needed": ["llm_assisted"],
+        "additional_tools_needed": ["unused_import"],
         "reason": "More",
         "coverage_assessment": "40%",
     })
@@ -168,6 +170,48 @@ def test_reflection_non_final_round_still_loops():
     result = node(state)
     assert result["needs_more_analysis"] is True
     assert "report" not in result
+
+
+def test_reflection_no_new_rules_finalizes_instead_of_idling():
+    """Anti-idle: if every suggested rule was already executed (or is
+    unknown), looping back would collect zero new evidence — the node
+    must finalize even on a non-final round."""
+    mock_llm = MagicMock()
+    mock_llm.chat_json.return_value = dict({
+        "needs_more_analysis": True,
+        "additional_tools_needed": ["sql_injection", "not_a_rule"],
+        "reason": "More",
+        "coverage_assessment": "40%",
+    })
+    node = ReflectionNode(mock_llm, max_rounds=3)
+    state = AgentState(
+        reflection_round=0,
+        rules_executed=["sql_injection"],
+    )
+    result = node(state)
+    assert result["needs_more_analysis"] is False
+    assert result.get("hit_reflection_cap") is False  # not a cap issue
+    assert "no new rules" in result["reflection_notes"][-1]
+
+
+def test_reflection_filters_already_executed_from_suggestions():
+    """Suggested rules that already ran are dropped from the returned
+    additional_tools_needed so tool_router only executes new ones."""
+    mock_llm = MagicMock()
+    mock_llm.chat_json.return_value = dict({
+        "needs_more_analysis": True,
+        "additional_tools_needed": ["sql_injection", "magic_number"],
+        "reason": "More",
+        "coverage_assessment": "40%",
+    })
+    node = ReflectionNode(mock_llm, max_rounds=3)
+    state = AgentState(
+        reflection_round=0,
+        rules_executed=["sql_injection"],
+    )
+    result = node(state)
+    assert result["needs_more_analysis"] is True
+    assert result["additional_tools_needed"] == ["magic_number"]
 
 
 # ------------------------------------------------------------------
@@ -207,7 +251,9 @@ def test_reporter_builds_report_from_state():
     assert report.rules_executed == ["sql_injection"]
     assert report.reflection_rounds == 3
     assert report.long_term_feedback_applied == ["fb"]
-    assert result["needs_more_analysis"] is False
+    # needs_more_analysis is NOT overwritten by reporter — it stays as
+    # an observability signal in state (default False here).
+    assert "needs_more_analysis" not in result
     assert result["phase"].value == "done"
 
 

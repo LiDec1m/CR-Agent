@@ -26,7 +26,10 @@ def _load_diff(name: str) -> str:
     return (FIXTURES_DIR / name).read_text(encoding="utf-8")
 
 
-def _mock_llm(plan, risks, reflection_done=True, extra_reflection=None):
+def _mock_llm(
+    plan, risks, reflection_done=True, extra_reflection=None,
+    extra_tools=None,
+):
     """Create a mock LLM with pre-set chat responses.
 
     Args:
@@ -35,7 +38,15 @@ def _mock_llm(plan, risks, reflection_done=True, extra_reflection=None):
         reflection_done: if True, reflection says "no more analysis needed".
         extra_reflection: if provided, first reflection says "need more",
             then this is used for the second reflection (done).
+        extra_tools: rules suggested by the first reflection. Must NOT
+            overlap with ``plan`` — the anti-idle-loop validation in
+            ReflectionNode finalizes early if the suggestions contain no
+            never-executed rule. Defaults to a rule outside the plan.
     """
+    if extra_tools is None:
+        extra_tools = [
+            r for r in registry.list_all() if r not in plan
+        ][:1]
     llm = MagicMock()
     responses = [
         json.dumps({"summary": "test", "plan": plan, "risk_areas": []}),
@@ -44,7 +55,7 @@ def _mock_llm(plan, risks, reflection_done=True, extra_reflection=None):
     if extra_reflection:
         responses.append(json.dumps({
             "needs_more_analysis": True,
-            "additional_tools_needed": plan[:1],
+            "additional_tools_needed": extra_tools,
             "reason": "Need more", "coverage_assessment": "50%",
         }))
         responses.append(json.dumps({

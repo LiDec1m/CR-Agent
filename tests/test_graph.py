@@ -121,3 +121,53 @@ def test_graph_checkpointer_persists_state():
             # state retrievable after run == checkpoint persisted
             snap = graph.get_state(cfg)
             assert snap.values.get("report") is not None
+
+
+def test_graph_round_cap_still_produces_report_and_is_observable():
+    """needs_more=True at the round cap must still yield a report (via
+    reporter), and the final state must preserve the observation signal:
+    needs_more_analysis=True + hit_reflection_cap=True."""
+    from src.graph import build_graph
+    from src.rules import registry
+    from src.parsers.diff_parser import GitDiffParser
+
+    mock_llm = MagicMock()
+    mock_llm.chat_json.side_effect = [
+        {"summary": "t", "plan": ["hardcoded_secret"], "risk_areas": []},
+        {"risks": [], "overall_risk_score": 0.0},
+        # reflections keep asking for more with NEW rules until cap
+        {"needs_more_analysis": True, "additional_tools_needed": ["magic_number"],
+         "reason": "more", "coverage_assessment": "40%"},
+        {"risks": [], "overall_risk_score": 0.0},
+        {"needs_more_analysis": True, "additional_tools_needed": ["long_line"],
+         "reason": "more", "coverage_assessment": "60%"},
+        {"risks": [], "overall_risk_score": 0.0},
+        {"needs_more_analysis": True, "additional_tools_needed": ["naming_violation"],
+         "reason": "still not enough", "coverage_assessment": "70%"},
+    ]
+    mock_rag = MagicMock()
+    mock_rag.search_history.return_value = []
+    mock_rag.search_codebase.return_value = []
+    mock_rag.search_security.return_value = []
+    mock_rag.add_history = MagicMock()
+    mock_ltm = MagicMock()
+    mock_ltm.get_feedback.return_value = []
+
+    graph = build_graph(mock_llm, mock_rag, mock_ltm, registry, max_rounds=3)
+    diff = (
+        "diff --git a/y.py b/y.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+def f():\n"
+        "+    password = 'sk-999'\n"
+    )
+    hunks = GitDiffParser().parse(diff)
+    result = graph.invoke(
+        {"repo": "t", "raw_diff": diff, "hunks": [h.model_dump() for h in hunks]},
+        {"recursion_limit": 30},
+    )
+    # report still produced despite round-capped needs_more=True
+    assert result["report"] is not None
+    # observability preserved in final state
+    assert result["needs_more_analysis"] is True
+    assert result["hit_reflection_cap"] is True
+    assert result["reflection_round"] == 3
