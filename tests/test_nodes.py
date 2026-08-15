@@ -137,9 +137,9 @@ def test_reflection_node_max_rounds():
 
 def test_reflection_final_round_preserves_observation():
     """At the final allowed round, the LLM's true verdict is preserved
-    (needs_more stays True + hit_reflection_cap marker) for observability;
-    the routing condition sends the graph to reporter regardless, so the
-    report is still produced. Anti-idle: only if NEW rules are suggested."""
+    (needs_more stays True) for observability; the routing condition
+    sends the graph to reporter regardless, so the report is still
+    produced. Anti-idle: only if NEW rules are suggested."""
     mock_llm = MagicMock()
     mock_llm.chat_json.return_value = dict({
         "needs_more_analysis": True,
@@ -151,7 +151,6 @@ def test_reflection_final_round_preserves_observation():
     state = AgentState(reflection_round=2)  # next round = 3 == max_rounds
     result = node(state)
     assert result["needs_more_analysis"] is True  # preserved, not overridden
-    assert result["hit_reflection_cap"] is True   # observability marker
     assert "report" not in result  # reporter builds it downstream
 
 
@@ -190,7 +189,6 @@ def test_reflection_no_new_rules_finalizes_instead_of_idling():
     )
     result = node(state)
     assert result["needs_more_analysis"] is False
-    assert result.get("hit_reflection_cap") is False  # not a cap issue
     assert "no new rules" in result["reflection_notes"][-1]
 
 

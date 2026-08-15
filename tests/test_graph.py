@@ -126,7 +126,8 @@ def test_graph_checkpointer_persists_state():
 def test_graph_round_cap_still_produces_report_and_is_observable():
     """needs_more=True at the round cap must still yield a report (via
     reporter), and the final state must preserve the observation signal:
-    needs_more_analysis=True + hit_reflection_cap=True."""
+    needs_more_analysis=True (terminal True means the diff was
+    under-analysed at the round cap)."""
     from src.graph import build_graph
     from src.rules import registry
     from src.parsers.diff_parser import GitDiffParser
@@ -169,5 +170,4 @@ def test_graph_round_cap_still_produces_report_and_is_observable():
     assert result["report"] is not None
     # observability preserved in final state
     assert result["needs_more_analysis"] is True
-    assert result["hit_reflection_cap"] is True
     assert result["reflection_round"] == 3

@@ -260,7 +260,7 @@ def analyze(diff_file, diff_text, thread_id, repo, commit):
 
     # -- Render report --
     console.print()
-    if result.get("hit_reflection_cap"):
+    if result.get("needs_more_analysis"):
         console.print(
             "[yellow]⚠ Coverage warning: reflection hit the round cap "
             "with the LLM still requesting more analysis. "

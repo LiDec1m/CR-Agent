@@ -42,7 +42,6 @@ class GraphState(TypedDict, total=False):
     reflection_round: int
     reflection_notes: Annotated[list, operator.add]
     needs_more_analysis: bool
-    hit_reflection_cap: bool
     additional_tools_needed: list
     long_term_feedback: list
     rag_context: dict

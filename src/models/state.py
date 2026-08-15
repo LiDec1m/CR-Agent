@@ -146,7 +146,6 @@ class AgentState(BaseModel):
     reflection_round: int = 0
     reflection_notes: list[str] = Field(default_factory=list)
     needs_more_analysis: bool = False
-    hit_reflection_cap: bool = False
     additional_tools_needed: list[str] = Field(default_factory=list)
     long_term_feedback: list[str] = Field(default_factory=list)
     rag_context: dict = Field(default_factory=dict)

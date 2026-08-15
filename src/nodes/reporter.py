@@ -23,9 +23,9 @@ class ReporterNode:
 
     def __call__(self, state: AgentState) -> dict:
         report = self._build_report(state)
-        # Do NOT overwrite needs_more_analysis here: its final value is an
-        # observability signal (True + hit_reflection_cap=True means the
-        # LLM considered coverage insufficient at the round cap).
+        # Do NOT overwrite needs_more_analysis here: its terminal value
+        # is an observability signal — True at the end means the LLM still
+        # considered coverage insufficient at the round cap.
         return {
             "phase": AgentPhase.DONE,
             "report": report,

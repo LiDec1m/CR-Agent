@@ -110,7 +110,6 @@ class ReflectionNode:
         # yet (valid name + not already executed). Otherwise the next
         # round would collect zero new evidence and burn an LLM round
         # for nothing — finalize instead.
-        hit_round_cap = False
         if needs_more_analysis:
             available = set(registry.list_all())
             new_tools = [
@@ -127,14 +126,13 @@ class ReflectionNode:
                 )
             else:
                 additional_tools_needed = new_tools
-                if new_round >= self.max_rounds:
-                    # Observation marker, NOT a behaviour override: the LLM
-                    # still believes coverage is insufficient, but the
-                    # routing condition (reflection_round < max_rounds)
-                    # will send the graph to reporter. needs_more_analysis
-                    # keeps its true value so callers can measure how many
-                    # diffs were under-analysed at the round cap.
-                    hit_round_cap = True
+                # NOTE: at the round cap (new_round >= max_rounds) the LLM's
+                # true verdict is preserved (needs_more_analysis stays
+                # True). The routing condition (reflection_round <
+                # max_rounds) still sends the graph to reporter, and the
+                # terminal needs_more_analysis=True is itself the
+                # observability signal that this diff was under-analysed
+                # at the cap.
 
         notes = list(state.reflection_notes)
         notes.append(
@@ -143,14 +141,12 @@ class ReflectionNode:
         if not needs_more_analysis:
             return {
                 "needs_more_analysis": False,
-                "hit_reflection_cap": hit_round_cap,
                 "phase": AgentPhase.DONE,
                 "reflection_round": new_round,
                 "reflection_notes": notes,
             }
         return {
             "needs_more_analysis": True,
-            "hit_reflection_cap": hit_round_cap,
             "additional_tools_needed": additional_tools_needed,
             "phase": AgentPhase.TOOL_ROUTING,
             "reflection_round": new_round,
