@@ -171,3 +171,49 @@ def test_graph_round_cap_still_produces_report_and_is_observable():
     # observability preserved in final state
     assert result["needs_more_analysis"] is True
     assert result["reflection_round"] == 3
+
+
+def test_graph_reflection_notes_not_duplicated():
+    """Regression: GraphState.reflection_notes uses operator.add (delta
+    accumulation), so ReflectionNode must return ONLY the new note. It
+    used to return the full list, duplicating every earlier note on each
+    round (e.g. two rounds yielded [n1, n1, n2])."""
+    from src.graph import build_graph
+    from src.rules import registry
+    from src.parsers.diff_parser import GitDiffParser
+
+    mock_llm = MagicMock()
+    mock_llm.chat_json.side_effect = [
+        {"summary": "t", "plan": ["hardcoded_secret"], "risk_areas": []},
+        {"risks": [], "overall_risk_score": 0.0},
+        {"needs_more_analysis": True, "additional_tools_needed": ["magic_number"],
+         "reason": "more", "coverage_assessment": "40%"},
+        {"risks": [], "overall_risk_score": 0.0},
+        {"needs_more_analysis": False, "reason": "done", "coverage_assessment": "95%"},
+    ]
+    mock_rag = MagicMock()
+    mock_rag.search_history.return_value = []
+    mock_rag.search_codebase.return_value = []
+    mock_rag.search_security.return_value = []
+    mock_rag.add_history = MagicMock()
+    mock_ltm = MagicMock()
+    mock_ltm.get_feedback.return_value = []
+    mock_ltm.get_feedback_by_rule_across_files.return_value = []
+
+    graph = build_graph(mock_llm, mock_rag, mock_ltm, registry, max_rounds=3)
+    diff = (
+        "diff --git a/y.py b/y.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+def f():\n"
+        "+    password = 'sk-999'\n"
+    )
+    hunks = GitDiffParser().parse(diff)
+    result = graph.invoke(
+        {"repo": "t", "raw_diff": diff, "hunks": [h.model_dump() for h in hunks]},
+        {"recursion_limit": 30},
+    )
+    notes = result["reflection_notes"]
+    assert len(notes) == 2
+    assert len(set(notes)) == 2  # no duplicates
+    assert notes[0].startswith("Round 1:")
+    assert notes[1].startswith("Round 2:")

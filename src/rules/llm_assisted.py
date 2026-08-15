@@ -11,11 +11,10 @@ it can never run in the first round.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from src.llm.client import LLMClient
-from src.models import ChangeType, Evidence, HunkInfo, RiskCategory, Severity
+from src.models import Evidence, HunkInfo, RiskCategory, Severity
 
 
 def create_llm_assisted_rule(llm: LLMClient) -> Any:

@@ -134,17 +134,18 @@ class ReflectionNode:
                 # observability signal that this diff was under-analysed
                 # at the cap.
 
-        notes = list(state.reflection_notes)
-        notes.append(
-            f"Round {new_round}: {coverage_assessment}; {reason}"
-        )
+        # NOTE: GraphState.reflection_notes uses operator.add (delta
+        # accumulation), so we must return ONLY the new note here —
+        # returning the full list would duplicate every earlier note
+        # on each round.
+        new_note = f"Round {new_round}: {coverage_assessment}; {reason}"
         if not needs_more_analysis:
             return {
                 "needs_more_analysis": False,
                 "pending_tools": [],
                 "phase": AgentPhase.DONE,
                 "reflection_round": new_round,
-                "reflection_notes": notes,
+                "reflection_notes": [new_note],
             }
         # Wire key "additional_tools_needed" (LLM JSON contract) maps
         # to the unified pending_tools queue consumed by ToolRouter.
@@ -153,5 +154,5 @@ class ReflectionNode:
             "pending_tools": additional_tools_needed,
             "phase": AgentPhase.TOOL_ROUTING,
             "reflection_round": new_round,
-            "reflection_notes": notes,
+            "reflection_notes": [new_note],
         }

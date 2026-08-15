@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import logging
-from copy import deepcopy
-
 from src.models import AgentPhase, AgentState, DiffLine, Evidence, HunkInfo, RiskCategory, Severity
 from src.rag.retriever import RAGRetriever
 from src.rules.registry import ToolRegistry
@@ -97,7 +95,6 @@ class ToolRouterNode:
             # Reflection decides to loop and refills it.
             "pending_tools": [],
             "phase": AgentPhase.JUDGING,
-            "needs_more_analysis": False,
             "rag_context": rag_context,
         }
 
