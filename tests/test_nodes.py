@@ -38,8 +38,8 @@ def test_planner_node():
         hunks=[_make_hunk('query = "SELECT * FROM users WHERE name=\'" + username')],
     )
     result = node(state)
-    assert "plan" in result
-    assert "sql_injection" in result["plan"]
+    assert "pending_tools" in result
+    assert "sql_injection" in result["pending_tools"]
     assert result["phase"].value == "tool_routing"
 
 
@@ -50,7 +50,7 @@ def test_tool_router_node():
     node = ToolRouterNode(registry, mock_rag)
     state = AgentState(
         hunks=[_make_hunk('os.system("rm -rf /")')],
-        plan=["command_injection"],
+        pending_tools=["command_injection"],
     )
     result = node(state)
     assert "evidence_pool" in result
@@ -106,7 +106,7 @@ def test_reflection_node_needs_more():
     state = AgentState(reflection_round=0)
     result = node(state)
     assert result["needs_more_analysis"] is True
-    assert "deep_nesting" in result["additional_tools_needed"]
+    assert "deep_nesting" in result["pending_tools"]
     assert result["reflection_round"] == 1
 
 
@@ -209,7 +209,7 @@ def test_reflection_filters_already_executed_from_suggestions():
     )
     result = node(state)
     assert result["needs_more_analysis"] is True
-    assert result["additional_tools_needed"] == ["magic_number"]
+    assert result["pending_tools"] == ["magic_number"]
 
 
 # ------------------------------------------------------------------

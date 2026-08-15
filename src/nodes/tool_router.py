@@ -20,11 +20,10 @@ class ToolRouterNode:
         self.rag = rag
 
     def __call__(self, state: AgentState) -> dict:
-        selected_tools = (
-            state.additional_tools_needed
-            if state.needs_more_analysis and state.additional_tools_needed
-            else state.plan
-        )
+        # Consume the unified queue. Anti-idle validation in Reflection
+        # guarantees a non-empty valid queue on loop-back; on the first
+        # round it holds Planner's initial plan.
+        selected_tools = state.pending_tools
         evidence_pool: list[Evidence] = []
         rules_executed: list[str] = []
 
@@ -93,10 +92,12 @@ class ToolRouterNode:
         return {
             "evidence_pool": evidence_pool,
             "rules_executed": rules_executed,
-            "selected_tools": selected_tools,
+            # Consume the queue: what actually ran is already recorded in
+            # rules_executed (accumulated); the queue must be empty until
+            # Reflection decides to loop and refills it.
+            "pending_tools": [],
             "phase": AgentPhase.JUDGING,
             "needs_more_analysis": False,
-            "additional_tools_needed": [],
             "rag_context": rag_context,
         }
 

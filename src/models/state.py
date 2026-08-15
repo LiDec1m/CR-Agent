@@ -137,16 +137,18 @@ class AgentState(BaseModel):
     commit_sha: Optional[str] = None
     raw_diff: str = ""
     hunks: list[HunkInfo] = Field(default_factory=list)
-    plan: list[str] = Field(default_factory=list)
+    # Queue of rules to execute in the CURRENT tool_router round.
+    # Written by Planner (first round) and Reflection (each loop),
+    # consumed and cleared by ToolRouter after execution. The audit
+    # trail of what actually ran lives in rules_executed (accumulated).
+    pending_tools: list[str] = Field(default_factory=list)
     phase: AgentPhase = AgentPhase.PLANNING
-    selected_tools: list[str] = Field(default_factory=list)
     evidence_pool: list[Evidence] = Field(default_factory=list)
     rules_executed: list[str] = Field(default_factory=list)
     risks: list[RiskItem] = Field(default_factory=list)
     reflection_round: int = 0
     reflection_notes: list[str] = Field(default_factory=list)
     needs_more_analysis: bool = False
-    additional_tools_needed: list[str] = Field(default_factory=list)
     long_term_feedback: list[str] = Field(default_factory=list)
     rag_context: dict = Field(default_factory=dict)
     report: Optional[RiskReport] = None

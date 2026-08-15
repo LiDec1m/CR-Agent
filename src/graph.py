@@ -33,16 +33,16 @@ class GraphState(TypedDict, total=False):
     commit_sha: str
     raw_diff: str
     hunks: list
-    plan: list
+    # Queue of rules for the CURRENT tool_router round: written by
+    # Planner / Reflection, consumed and cleared by ToolRouter.
+    pending_tools: list
     phase: AgentPhase
-    selected_tools: list
     evidence_pool: Annotated[list, operator.add]
     rules_executed: Annotated[list, operator.add]
     risks: list
     reflection_round: int
     reflection_notes: Annotated[list, operator.add]
     needs_more_analysis: bool
-    additional_tools_needed: list
     long_term_feedback: list
     rag_context: dict
     report: object

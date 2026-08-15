@@ -71,7 +71,9 @@ class PlannerNode:
             plan = []
 
         return {
-            "plan": plan,
+            # Wire key "plan" (LLM JSON contract) maps to the unified
+            # pending_tools queue consumed by ToolRouter.
+            "pending_tools": plan,
             "phase": AgentPhase.TOOL_ROUTING,
             "long_term_feedback": feedback,
             "rag_context": {"history": history},

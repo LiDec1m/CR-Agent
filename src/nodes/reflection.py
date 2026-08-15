@@ -141,13 +141,16 @@ class ReflectionNode:
         if not needs_more_analysis:
             return {
                 "needs_more_analysis": False,
+                "pending_tools": [],
                 "phase": AgentPhase.DONE,
                 "reflection_round": new_round,
                 "reflection_notes": notes,
             }
+        # Wire key "additional_tools_needed" (LLM JSON contract) maps
+        # to the unified pending_tools queue consumed by ToolRouter.
         return {
             "needs_more_analysis": True,
-            "additional_tools_needed": additional_tools_needed,
+            "pending_tools": additional_tools_needed,
             "phase": AgentPhase.TOOL_ROUTING,
             "reflection_round": new_round,
             "reflection_notes": notes,
