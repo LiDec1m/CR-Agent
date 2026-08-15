@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.models import AgentState, ChangeType, DiffLine, HunkInfo
+from src.models import AgentState, ChangeType, DiffLine, HunkInfo, RiskItem
 from src.nodes.planner import PlannerNode
 from src.nodes.tool_router import ToolRouterNode
 from src.nodes.judge import JudgeNode
@@ -135,9 +135,10 @@ def test_reflection_node_max_rounds():
     mock_llm.chat.assert_not_called()
 
 
-def test_reflection_final_round_forces_report():
+def test_reflection_final_round_forces_stop():
     """At the final allowed round, even if the LLM wants more analysis,
-    the node must finalize with a report (routing would not loop back)."""
+    the node must report needs_more=False (routing would not loop back).
+    Report construction is ReporterNode's job, not Reflection's."""
     mock_llm = MagicMock()
     mock_llm.chat_json.return_value = dict({
         "needs_more_analysis": True,
@@ -149,7 +150,7 @@ def test_reflection_final_round_forces_report():
     state = AgentState(reflection_round=2)  # next round = 3 == max_rounds
     result = node(state)
     assert result["needs_more_analysis"] is False
-    assert result["report"] is not None
+    assert "report" not in result  # reporter builds it downstream
     assert "Max reflection rounds" in result["reflection_notes"][-1]
 
 
@@ -167,3 +168,55 @@ def test_reflection_non_final_round_still_loops():
     result = node(state)
     assert result["needs_more_analysis"] is True
     assert "report" not in result
+
+
+# ------------------------------------------------------------------
+# ReporterNode tests
+# ------------------------------------------------------------------
+
+def test_reporter_builds_report_from_state():
+    from src.nodes.reporter import ReporterNode
+
+    hunk = HunkInfo(
+        file_path="app.py", old_start=1, old_count=0,
+        new_start=1, new_count=2,
+        lines=[
+            DiffLine(content="def f():", change_type=ChangeType.ADDED, new_line_no=1),
+            DiffLine(content="    pass", change_type=ChangeType.ADDED, new_line_no=2),
+        ],
+    )
+    risk = RiskItem(
+        title="Test risk", category="security", severity="critical",
+        description="d", evidence_refs=[], suggestion="s",
+        file_path="app.py", risk_score=0.9,
+    )
+    state = AgentState(
+        repo="r", commit_sha="abc", hunks=[hunk],
+        risks=[risk], rules_executed=["sql_injection"],
+        reflection_round=3, reflection_notes=["Round 1: x"],
+        long_term_feedback=["fb"],
+    )
+    result = ReporterNode()(state)
+    report = result["report"]
+    assert report is not None
+    assert report.repo == "r"
+    assert report.commit_sha == "abc"
+    assert report.overall_risk_score == 0.9
+    assert report.files_scanned == ["app.py"]
+    assert report.total_hunks == 1
+    assert report.rules_executed == ["sql_injection"]
+    assert report.reflection_rounds == 3
+    assert report.long_term_feedback_applied == ["fb"]
+    assert result["needs_more_analysis"] is False
+    assert result["phase"].value == "done"
+
+
+def test_reporter_empty_state_zero_score():
+    from src.nodes.reporter import ReporterNode
+
+    result = ReporterNode()(AgentState())
+    report = result["report"]
+    assert report is not None
+    assert report.overall_risk_score == 0.0
+    assert report.summary == "No significant risks detected."
+    assert report.risks == []

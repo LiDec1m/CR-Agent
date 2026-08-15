@@ -20,6 +20,7 @@ from src.llm.client import LLMClient, EmbeddingClient
 from src.rag.retriever import RAGRetriever
 from src.rag.indexer import SecurityKnowledgeLoader, CodebaseIndexer
 from src.memory.long_term import LongTermMemory
+from src.memory.short_term import ShortTermMemory
 from src.parsers.diff_parser import GitDiffParser
 from src.rules import registry
 from src.graph import build_graph
@@ -217,21 +218,29 @@ def analyze(diff_file, diff_text, thread_id, repo, commit):
 
     # -- Build graph --
     console.print("[cyan]Building analysis graph...[/cyan]")
-    graph = build_graph(llm, rag, ltm, reg, max_rounds=settings.max_reflection_rounds)
+    # Short-term memory: SqliteSaver checkpoints every node transition
+    # per thread_id, enabling state replay and interrupted-run resumption.
+    # Used as a context manager so the SQLite connection is closed on exit.
+    with ShortTermMemory("data/checkpoints.db").get_checkpointer() as checkpointer:
+        graph = build_graph(
+            llm, rag, ltm, reg,
+            max_rounds=settings.max_reflection_rounds,
+            checkpointer=checkpointer,
+        )
 
-    # -- Run analysis --
-    initial_state = {
-        "repo": repo,
-        "commit_sha": commit,
-        "raw_diff": raw_diff,
-        "hunks": [h.model_dump() for h in hunks],
-    }
+        # -- Run analysis --
+        initial_state = {
+            "repo": repo,
+            "commit_sha": commit,
+            "raw_diff": raw_diff,
+            "hunks": [h.model_dump() for h in hunks],
+        }
 
-    console.print("[cyan]Running analysis...[/cyan]")
-    result = graph.invoke(
-        initial_state,
-        {"configurable": {"thread_id": thread_id}},
-    )
+        console.print("[cyan]Running analysis...[/cyan]")
+        result = graph.invoke(
+            initial_state,
+            {"configurable": {"thread_id": thread_id}},
+        )
 
     # -- Write to RAG history --
     report = result.get("report")

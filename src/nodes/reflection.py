@@ -1,4 +1,10 @@
-"""Reflection node and final-report builder."""
+"""Reflection node: decide whether more analysis rounds are needed.
+
+Pure decision node — it assesses coverage (with cross-file feedback from
+long-term memory) and returns ``needs_more_analysis`` plus any additional
+rules to run. It never builds the report: that responsibility belongs to
+ReporterNode, which the graph always routes through on the way to END.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +12,12 @@ import json
 
 from src.llm.client import LLMClient
 from src.memory.long_term import LongTermMemory
-from src.models import AgentPhase, AgentState, RiskReport
+from src.models import AgentPhase, AgentState
 from src.rules import registry
 
 
 class ReflectionNode:
-    """Decide whether more rules are needed or finalize the risk report."""
+    """Decide whether more rules are needed or the analysis is complete."""
 
     def __init__(
         self,
@@ -30,7 +36,6 @@ class ReflectionNode:
                 "needs_more_analysis": False,
                 "phase": AgentPhase.DONE,
                 "reflection_round": new_round,
-                "report": self._build_report(state, new_round),
             }
 
         # Fetch cross-file feedback for rules that were ACTUALLY triggered
@@ -103,8 +108,8 @@ class ReflectionNode:
         # Boundary guard: this is the last allowed round. Even if the LLM
         # wants more analysis, the routing condition
         # (reflection_round < max_rounds) will not send us back to
-        # tool_router — so force finalization here to guarantee a report
-        # is always produced (otherwise the graph ends report-less).
+        # tool_router — so report the intention to stop instead of
+        # requesting a loop that cannot happen.
         if new_round >= self.max_rounds and needs_more_analysis:
             needs_more_analysis = False
             reason = (
@@ -122,7 +127,6 @@ class ReflectionNode:
                 "phase": AgentPhase.DONE,
                 "reflection_round": new_round,
                 "reflection_notes": notes,
-                "report": self._build_report(state, new_round),
             }
         return {
             "needs_more_analysis": True,
@@ -131,27 +135,3 @@ class ReflectionNode:
             "reflection_round": new_round,
             "reflection_notes": notes,
         }
-
-    def _build_report(self, state: AgentState, reflection_round: int) -> RiskReport:
-        """Build the final report entirely from the current agent state."""
-        files_scanned = list(dict.fromkeys(hunk.file_path for hunk in state.hunks))
-        overall_risk_score = max(
-            (risk.risk_score for risk in state.risks), default=0.0
-        )
-        summary = (
-            f"Detected {len(state.risks)} risk(s)."
-            if state.risks
-            else "No significant risks detected."
-        )
-        return RiskReport(
-            repo=state.repo,
-            commit_sha=state.commit_sha,
-            summary=summary,
-            risks=state.risks,
-            overall_risk_score=overall_risk_score,
-            files_scanned=files_scanned,
-            total_hunks=len(state.hunks),
-            rules_executed=state.rules_executed,
-            reflection_rounds=reflection_round,
-            long_term_feedback_applied=state.long_term_feedback,
-        )

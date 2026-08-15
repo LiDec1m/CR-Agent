@@ -8,7 +8,13 @@ from typing import Annotated, TypedDict
 from langgraph.graph import StateGraph, END
 
 from src.models import AgentState, AgentPhase
-from src.nodes import PlannerNode, ToolRouterNode, JudgeNode, ReflectionNode
+from src.nodes import (
+    JudgeNode,
+    PlannerNode,
+    ReflectionNode,
+    ReporterNode,
+    ToolRouterNode,
+)
 from src.rules.registry import ToolRegistry
 from src.llm.client import LLMClient
 from src.rag.retriever import RAGRetriever
@@ -59,17 +65,25 @@ def build_graph(
     ltm: LongTermMemory,
     registry: ToolRegistry,
     max_rounds: int = 3,
+    checkpointer=None,
 ):
     """Build and compile the LangGraph workflow.
 
-    The graph wires four nodes -- planner, tool_router, judge, reflection --
-    with a conditional edge from reflection back to tool_router (when more
-    analysis is needed) or to END (when the report is final).
+    The graph wires five nodes -- planner, tool_router, judge, reflection,
+    reporter -- with a conditional edge from reflection back to tool_router
+    (when more analysis is needed) or to reporter (which builds the final
+    RiskReport and routes to END). Routing every exit through reporter
+    makes a report-less finish structurally impossible.
+
+    ``checkpointer`` enables short-term memory persistence: every node
+    transition is checkpointed per ``thread_id``, enabling state replay
+    (``graph.get_state_history``) and resumption of interrupted runs.
     """
     planner = PlannerNode(llm, rag, ltm)
     tool_router = ToolRouterNode(registry, rag)
     judge = JudgeNode(llm, rag)
     reflection = ReflectionNode(llm, ltm=ltm, max_rounds=max_rounds)
+    reporter = ReporterNode()
 
     # -- Node wrappers: accept dict, convert to AgentState, return dict --
 
@@ -89,13 +103,17 @@ def build_graph(
         s = _dict_to_state(state)
         return reflection(s)
 
+    def reporter_node(state: dict) -> dict:
+        s = _dict_to_state(state)
+        return reporter(s)
+
     # -- Conditional edge: decide where to go after reflection --
 
     def reflection_route(state: dict) -> str:
         s = _dict_to_state(state)
         if s.needs_more_analysis and s.reflection_round < max_rounds:
             return "tool_router"
-        return END
+        return "reporter"
 
     # -- Assemble the workflow --
 
@@ -104,6 +122,7 @@ def build_graph(
     workflow.add_node("tool_router", tool_router_node)
     workflow.add_node("judge", judge_node)
     workflow.add_node("reflection", reflection_node)
+    workflow.add_node("reporter", reporter_node)
 
     workflow.set_entry_point("planner")
     workflow.add_edge("planner", "tool_router")
@@ -114,8 +133,9 @@ def build_graph(
         reflection_route,
         {
             "tool_router": "tool_router",
-            END: END,
+            "reporter": "reporter",
         },
     )
+    workflow.add_edge("reporter", END)
 
-    return workflow.compile()
+    return workflow.compile(checkpointer=checkpointer)

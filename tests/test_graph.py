@@ -69,3 +69,55 @@ def test_graph_runs_end_to_end():
     result = graph.invoke(initial_state, {"configurable": {"thread_id": "test-1"}})
     assert result is not None
     assert len(result.get("evidence_pool", [])) >= 1
+
+
+def test_graph_checkpointer_persists_state():
+    """Short-term memory: graph runs with SqliteSaver produce checkpoints
+    retrievable via get_state, and a report is always produced through
+    the reporter node."""
+    import tempfile, os
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from src.graph import build_graph
+    from src.rules import registry
+    from src.parsers.diff_parser import GitDiffParser
+
+    mock_llm = MagicMock()
+    mock_llm.chat_json.side_effect = [
+        {"summary": "t", "plan": ["hardcoded_secret"], "risk_areas": []},
+        {"risks": [], "overall_risk_score": 0.0},
+        {"needs_more_analysis": False, "additional_tools_needed": [],
+         "reason": "ok", "coverage_assessment": "100%"},
+    ]
+    mock_rag = MagicMock()
+    mock_rag.search_history.return_value = []
+    mock_rag.search_codebase.return_value = []
+    mock_rag.search_security.return_value = []
+    mock_rag.add_history = MagicMock()
+    mock_ltm = MagicMock()
+    mock_ltm.get_feedback.return_value = []
+
+    with tempfile.TemporaryDirectory() as td:
+        db = os.path.join(td, "cp.db")
+        with SqliteSaver.from_conn_string(db) as cp:
+            graph = build_graph(
+                mock_llm, mock_rag, mock_ltm, registry,
+                max_rounds=3, checkpointer=cp,
+            )
+            cfg = {"configurable": {"thread_id": "test-cp"}}
+            diff = (
+                "diff --git a/x.py b/x.py\n"
+                "@@ -0,0 +1,2 @@\n"
+                "+def f():\n"
+                "+    password = 'sk-12345'\n"
+            )
+            hunks = GitDiffParser().parse(diff)
+            result = graph.invoke(
+                {"repo": "t", "raw_diff": diff,
+                 "hunks": [h.model_dump() for h in hunks]},
+                cfg,
+            )
+            # report always present (reporter node guarantee)
+            assert result["report"] is not None
+            # state retrievable after run == checkpoint persisted
+            snap = graph.get_state(cfg)
+            assert snap.values.get("report") is not None
