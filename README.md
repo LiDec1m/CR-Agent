@@ -5,7 +5,7 @@
 ## 特性
 
 - **混合确定性+概率性架构**：20 条 AST/正则确定性规则提供可解释证据链，LLM 做高层语义判定
-- **四节点 LangGraph StateGraph**：Planner → Tool Router → Judge → Reflection，条件边实现反思回环
+- **五节点 LangGraph StateGraph**：Planner → Tool Router → Judge → Reflection → Reporter，条件边实现反思回环，Reporter 终点节点保证报告永不缺失
 - **RAG 知识增强**：安全知识库 + 历史风险检索 + 代码库上下文检索（Embedding + FTS5 混合检索 + RRF 融合）
 - **SQLite 双层记忆**：短期 Checkpointer + 长期反馈表
 - **可解释证据链**：每个风险都引用至少一条确定性证据
@@ -36,7 +36,7 @@ python main.py index --repo-path /path/to/repo
 ## 架构
 
 ```
-START → Planner → Tool Router → Judge → Reflection → END
+START → Planner → Tool Router → Judge → Reflection → Reporter → END
           ↑           ↑          ↑            │
         RAG检索     RAG检索     RAG检索     needs_more?
         (历史风险)  (代码上下文) (安全知识)     │
@@ -44,12 +44,13 @@ START → Planner → Tool Router → Judge → Reflection → END
                          └─────────────────────────┘
 ```
 
-### 四个节点
+### 五个节点
 
 1. **Planner**：LLM 分析变更概况 + RAG 检索历史风险，输出检测计划（选择应执行的规则集）
 2. **Tool Router**：根据计划执行确定性规则收集证据 + RAG 检索代码库上下文（调用方/被调用方）
 3. **Judge**：LLM 聚合证据做风险判定 + RAG 检索安全知识库（编码规范、漏洞案例）
 4. **Reflection**：LLM 判断分析是否充分，不充分则回到 Tool Router 补充检测（最多 3 轮）
+5. **Reporter**：纯状态聚合构建最终风险报告（不调 LLM），所有退出路径必经此节点
 
 ### RAG 混合检索
 
@@ -98,6 +99,6 @@ Python 3.11+, LangGraph, OpenAI-compatible LLM, SQLite (FTS5), Pydantic v2, Rich
 2. **Embedding + FTS5 混合检索**：语义检索找概念相近的知识，关键词检索精确匹配规则 ID/文件路径，RRF 融合
 3. **RAG 嵌入节点而非独立节点**：三个检索方向触发时机不同，嵌入对应节点按需检索
 4. **AST + 正则混合**：Python 用 ast 模块零依赖，其他语言用正则
-5. **四节点而非单节点 LLM**：确定性规则提供可解释证据链，LLM 负责高层聚合判定
+5. **五节点而非单节点 LLM**：确定性规则提供可解释证据链，LLM 负责高层聚合判定；Reporter 独立收尾，报告缺失在图结构上不可能
 6. **Reflection 条件边**：Agent 自主决策是否回环，LangGraph 核心能力
 7. **只分析变更行**：性能优先，变更行是风险高发区
