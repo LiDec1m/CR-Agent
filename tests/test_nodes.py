@@ -43,6 +43,33 @@ def test_planner_node():
     assert result["phase"].value == "tool_routing"
 
 
+def test_planner_node_hardens_malformed_plan():
+    """Regression: 'plan': null / str / mixed-type list must coerce safely.
+
+    .get("plan", []) only fires on a MISSING key — an explicit null
+    must not reach ToolRouter as None (TypeError) nor a bare string
+    (char-by-char silent no-op).
+    """
+    mock_rag = MagicMock()
+    mock_rag.search_history.return_value = []
+    mock_ltm = MagicMock()
+    mock_ltm.get_feedback.return_value = []
+    node = PlannerNode(MagicMock(), mock_rag, mock_ltm)
+    state = AgentState(hunks=[_make_hunk("x = 1")])
+
+    cases = [
+        ({"plan": None}, []),
+        ({"plan": "sql_injection"}, []),
+        ({"plan": ["sql_injection", 42, None, "long_line"]},
+         ["sql_injection", "long_line"]),
+        ({}, []),
+    ]
+    for response, expected in cases:
+        node.llm.chat_json.return_value = response
+        result = node(state)
+        assert result["pending_tools"] == expected, response
+
+
 def test_tool_router_node():
     mock_rag = MagicMock()
     mock_rag.search_codebase.return_value = []

@@ -70,6 +70,16 @@ class PlannerNode:
         except Exception:
             plan = []
 
+        # Defensive hardening: LLM JSON may be valid but contain
+        # "plan": null (the .get default only fires on a MISSING key),
+        # a bare string, or mixed-type items. Iterating None crashes
+        # ToolRouter with TypeError; a string iterates char-by-char and
+        # silently no-ops every lookup. Coerce to a clean list of strings.
+        if not isinstance(plan, list):
+            plan = []
+        else:
+            plan = [t for t in plan if isinstance(t, str)]
+
         return {
             # Wire key "plan" (LLM JSON contract) maps to the unified
             # pending_tools queue consumed by ToolRouter.
