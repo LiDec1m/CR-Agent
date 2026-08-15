@@ -81,16 +81,36 @@ class ReflectionNode:
                 f"other files):\n{json.dumps(cross_file_feedback)}"
             )
         try:
-            response = json.loads(self.llm.chat("You are a code-risk reviewer.", prompt))
-            needs_more_analysis = bool(response.get("needs_more_analysis", False))
-            additional_tools_needed = response.get("additional_tools_needed", [])
-            reason = response.get("reason", "")
-            coverage_assessment = response.get("coverage_assessment", "")
+            response = self.llm.chat_json(
+                "You are a code-risk reviewer.", prompt
+            )
+            needs_more_analysis = bool(
+                response.get("needs_more_analysis", False)
+            ) if response else False
+            additional_tools_needed = (
+                response.get("additional_tools_needed", []) if response else []
+            )
+            reason = response.get("reason", "") if response else ""
+            coverage_assessment = (
+                response.get("coverage_assessment", "") if response else ""
+            )
         except Exception:
             needs_more_analysis = False
             additional_tools_needed = []
             reason = "Unable to parse reflection response."
             coverage_assessment = "unknown"
+
+        # Boundary guard: this is the last allowed round. Even if the LLM
+        # wants more analysis, the routing condition
+        # (reflection_round < max_rounds) will not send us back to
+        # tool_router — so force finalization here to guarantee a report
+        # is always produced (otherwise the graph ends report-less).
+        if new_round >= self.max_rounds and needs_more_analysis:
+            needs_more_analysis = False
+            reason = (
+                f"Max reflection rounds ({self.max_rounds}) reached; "
+                f"finalizing. Last assessment: {reason}"
+            )
 
         notes = list(state.reflection_notes)
         notes.append(

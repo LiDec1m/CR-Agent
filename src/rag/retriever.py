@@ -216,56 +216,6 @@ class RAGRetriever:
         finally:
             conn.close()
 
-    def add_codebase_entry(
-        self,
-        file_path: str,
-        symbol_name: str,
-        symbol_type: str,
-        line_range: str,
-        content: str,
-        imports: list[str],
-        embedding: list[float] | None = None,
-    ) -> None:
-        """Insert a codebase-index record."""
-        if embedding is None:
-            embedding = self._embedding_client.embed(
-                f"{file_path} {symbol_name} {content}"
-            )
-        embedding_str = json.dumps(embedding)
-        imports_str = json.dumps(imports)
-        created_at = datetime.now(timezone.utc).isoformat()
-
-        conn = sqlite3.connect(self._db_path)
-        try:
-            cursor = conn.execute(
-                """
-                INSERT INTO codebase_index
-                    (file_path, symbol_name, symbol_type, line_range, content,
-                     imports, embedding, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    file_path,
-                    symbol_name,
-                    symbol_type,
-                    line_range,
-                    content,
-                    imports_str,
-                    imports_str,
-                    embedding_str,
-                    created_at,
-                ),
-            )
-            rowid = cursor.lastrowid
-            conn.execute(
-                "INSERT INTO codebase_index_fts(rowid, file_path, symbol_name, "
-                "content) VALUES (?, ?, ?, ?)",
-                (rowid, file_path, symbol_name, content),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
     # ------------------------------------------------------------------
     # Search operations (hybrid: embedding + FTS5 + RRF)
     # ------------------------------------------------------------------

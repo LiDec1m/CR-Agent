@@ -42,10 +42,10 @@ def create_llm_assisted_rule(llm: LLMClient) -> Any:
         )
 
         try:
-            response = json.loads(
-                llm.chat("You are a code risk analyzer.", prompt)
+            response = llm.chat_json(
+                "You are a code risk analyzer.", prompt
             )
-            raw_evidences = response.get("evidences", [])
+            raw_evidences = response.get("evidences", []) if response else []
         except Exception:
             return []
 

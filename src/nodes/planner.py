@@ -63,8 +63,10 @@ class PlannerNode:
             f"Available rules:\n{json.dumps(available_rules)}"
         )
         try:
-            response = json.loads(self.llm.chat("You are a code risk planner.", prompt))
-            plan = response.get("plan", [])
+            response = self.llm.chat_json(
+                "You are a code risk planner.", prompt
+            )
+            plan = response.get("plan", []) if response else []
         except Exception:
             plan = []
 

@@ -38,13 +38,15 @@ class LongTermMemory:
         conn.commit()
         conn.close()
 
-    def get_feedback(self, file_pattern: str) -> list[dict]:
+    def get_feedback(self, file_pattern: str, limit: int = 10) -> list[dict]:
+        """Retrieve recent feedback for a file pattern, newest first."""
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         glob_pattern = file_pattern.replace("*", "%")
         rows = conn.execute(
-            "SELECT * FROM feedback WHERE file_pattern LIKE ?",
-            (glob_pattern,),
+            "SELECT * FROM feedback WHERE file_pattern LIKE ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (glob_pattern, limit),
         ).fetchall()
         conn.close()
         return [dict(r) for r in rows]
@@ -53,6 +55,7 @@ class LongTermMemory:
         self,
         rule_ids: list[str],
         exclude_file_pattern: str | None = None,
+        limit: int = 10,
     ) -> list[dict]:
         """Retrieve feedback by rule_id across ALL files.
 
@@ -60,11 +63,16 @@ class LongTermMemory:
         false_positive for judge.py, the same feedback should also
         inform analysis of tool_router.py when SEC001 is triggered.
 
+        Results are capped and sorted newest-first so that, as feedback
+        accumulates, the Reflection prompt stays within a bounded size
+        and the most recent (and thus most relevant) corrections win.
+
         Args:
             rule_ids: Rule IDs to match.
             exclude_file_pattern: Optionally exclude feedback from this
                 file pattern to avoid duplication (since file-specific
                 feedback is already fetched via get_feedback).
+            limit: Maximum number of feedback rows to return.
         """
         if not rule_ids:
             return []
@@ -80,6 +88,8 @@ class LongTermMemory:
             glob_pattern = exclude_file_pattern.replace("*", "%")
             sql += " AND file_pattern NOT LIKE ?"
             params.append(glob_pattern)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
         rows = conn.execute(sql, params).fetchall()
         conn.close()
         return [dict(r) for r in rows]

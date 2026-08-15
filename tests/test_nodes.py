@@ -24,7 +24,7 @@ def _make_hunk(code, file_path="test.py"):
 
 def test_planner_node():
     mock_llm = MagicMock()
-    mock_llm.chat.return_value = json.dumps({
+    mock_llm.chat_json.return_value = dict({
         "summary": "Modified login function",
         "plan": ["sql_injection", "hardcoded_secret"],
         "risk_areas": ["login.py"],
@@ -60,7 +60,7 @@ def test_tool_router_node():
 
 def test_judge_node():
     mock_llm = MagicMock()
-    mock_llm.chat.return_value = json.dumps({
+    mock_llm.chat_json.return_value = dict({
         "risks": [{
             "title": "Command Injection",
             "category": "security",
@@ -96,7 +96,7 @@ def test_judge_node():
 
 def test_reflection_node_needs_more():
     mock_llm = MagicMock()
-    mock_llm.chat.return_value = json.dumps({
+    mock_llm.chat_json.return_value = dict({
         "needs_more_analysis": True,
         "additional_tools_needed": ["deep_nesting"],
         "reason": "Coverage insufficient",
@@ -112,7 +112,7 @@ def test_reflection_node_needs_more():
 
 def test_reflection_node_done():
     mock_llm = MagicMock()
-    mock_llm.chat.return_value = json.dumps({
+    mock_llm.chat_json.return_value = dict({
         "needs_more_analysis": False,
         "additional_tools_needed": [],
         "reason": "Coverage sufficient",
@@ -133,3 +133,37 @@ def test_reflection_node_max_rounds():
     assert result["needs_more_analysis"] is False
     assert result["phase"].value == "done"
     mock_llm.chat.assert_not_called()
+
+
+def test_reflection_final_round_forces_report():
+    """At the final allowed round, even if the LLM wants more analysis,
+    the node must finalize with a report (routing would not loop back)."""
+    mock_llm = MagicMock()
+    mock_llm.chat_json.return_value = dict({
+        "needs_more_analysis": True,
+        "additional_tools_needed": ["llm_assisted"],
+        "reason": "Coverage still incomplete",
+        "coverage_assessment": "60%",
+    })
+    node = ReflectionNode(mock_llm, max_rounds=3)
+    state = AgentState(reflection_round=2)  # next round = 3 == max_rounds
+    result = node(state)
+    assert result["needs_more_analysis"] is False
+    assert result["report"] is not None
+    assert "Max reflection rounds" in result["reflection_notes"][-1]
+
+
+def test_reflection_non_final_round_still_loops():
+    """Before the final round, a 'need more' verdict must still loop."""
+    mock_llm = MagicMock()
+    mock_llm.chat_json.return_value = dict({
+        "needs_more_analysis": True,
+        "additional_tools_needed": ["llm_assisted"],
+        "reason": "More",
+        "coverage_assessment": "40%",
+    })
+    node = ReflectionNode(mock_llm, max_rounds=3)
+    state = AgentState(reflection_round=0)  # next round = 1 < 3
+    result = node(state)
+    assert result["needs_more_analysis"] is True
+    assert "report" not in result

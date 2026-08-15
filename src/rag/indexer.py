@@ -362,10 +362,11 @@ class CodebaseIndexer:
 
         return None
 
-    def index_file(self, file_path: str, content: str) -> int:
-        """Parse a Python file and index its symbols.
+    def index_file_full(self, file_path: str, content: str) -> int:
+        """Parse a Python file and index its symbols (full-source version).
 
-        Returns the number of symbols indexed.
+        This variant passes the original source to ``ast.get_source_segment``
+        so that function/class bodies are captured correctly.
         """
         try:
             tree = ast.parse(content)
@@ -375,12 +376,9 @@ class CodebaseIndexer:
         imports = self._extract_imports(content) if tree is not None else []
 
         symbols = (
-            self._extract_symbols_from_source(tree, content)
-            if tree is not None
-            else []
+            self._extract_symbols_from_source(tree, content) if tree is not None else []
         )
 
-        # If no symbols were found, index the entire file as one entry
         if not symbols:
             symbols = [
                 {
@@ -391,20 +389,25 @@ class CodebaseIndexer:
                 }
             ]
 
+        # Batch-compute all symbol embeddings in a single API call.
+        # Each text mirrors the query-side format used by search_codebase:
+        # file path + symbol name + truncated content.
+        embedding_texts = [
+            f"{file_path} {sym['name']} {sym.get('content', '')[:500]}"
+            for sym in symbols
+        ]
+        embeddings = self._embedding_client.embed_batch(embedding_texts)
+        imports_str = json.dumps(imports)
+
         conn = sqlite3.connect(self._db_path)
         try:
             count = 0
-            for sym in symbols:
+            for sym, embedding in zip(symbols, embeddings):
                 symbol_name = sym["name"]
                 symbol_type = sym["type"]
                 line_range = sym["lines"]
                 sym_content = sym.get("content", "")
-
-                embedding = self._embedding_client.embed(
-                    f"{file_path} {symbol_name} {sym_content[:500]}"
-                )
                 embedding_str = json.dumps(embedding)
-                imports_str = json.dumps(imports)
                 created_at = datetime.now(timezone.utc).isoformat()
 
                 cursor = conn.execute(
@@ -442,120 +445,6 @@ class CodebaseIndexer:
     # ------------------------------------------------------------------
     # AST helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _extract_symbols(tree: ast.Module) -> list[dict[str, Any]]:
-        """Extract function and class definitions from an AST."""
-        symbols: list[dict[str, Any]] = []
-        source_lines: list[str] = []
-
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                end_line = getattr(node, "end_lineno", node.lineno)
-                line_range = f"{node.lineno}-{end_line}"
-                # Try to get the source segment for the function
-                sym_content = ast.get_source_segment(
-                    "\n".join(source_lines), node
-                ) or ""
-                symbols.append(
-                    {
-                        "name": node.name,
-                        "type": "function",
-                        "lines": line_range,
-                        "content": sym_content,
-                    }
-                )
-            elif isinstance(node, ast.ClassDef):
-                end_line = getattr(node, "end_lineno", node.lineno)
-                line_range = f"{node.lineno}-{end_line}"
-                sym_content = ast.get_source_segment(
-                    "\n".join(source_lines), node
-                ) or ""
-                symbols.append(
-                    {
-                        "name": node.name,
-                        "type": "class",
-                        "lines": line_range,
-                        "content": sym_content,
-                    }
-                )
-
-        return symbols
-
-    def index_file_full(self, file_path: str, content: str) -> int:
-        """Parse a Python file and index its symbols (full-source version).
-
-        This variant passes the original source to ``ast.get_source_segment``
-        so that function/class bodies are captured correctly.
-        """
-        try:
-            tree = ast.parse(content)
-        except SyntaxError:
-            tree = None
-
-        imports = self._extract_imports(content) if tree is not None else []
-
-        symbols = (
-            self._extract_symbols_from_source(tree, content) if tree is not None else []
-        )
-
-        if not symbols:
-            symbols = [
-                {
-                    "name": Path(file_path).stem,
-                    "type": "module",
-                    "lines": "1-end",
-                    "content": content,
-                }
-            ]
-
-        conn = sqlite3.connect(self._db_path)
-        try:
-            count = 0
-            for sym in symbols:
-                symbol_name = sym["name"]
-                symbol_type = sym["type"]
-                line_range = sym["lines"]
-                sym_content = sym.get("content", "")
-
-                embedding = self._embedding_client.embed(
-                    f"{file_path} {symbol_name} {sym_content[:500]}"
-                )
-                embedding_str = json.dumps(embedding)
-                imports_str = json.dumps(imports)
-                created_at = datetime.now(timezone.utc).isoformat()
-
-                cursor = conn.execute(
-                    """
-                    INSERT INTO codebase_index
-                        (file_path, symbol_name, symbol_type, line_range,
-                         content, imports, embedding, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        file_path,
-                        symbol_name,
-                        symbol_type,
-                        line_range,
-                        sym_content,
-                        imports_str,
-                        embedding_str,
-                        created_at,
-                    ),
-                )
-                rowid = cursor.lastrowid
-
-                conn.execute(
-                    "INSERT INTO codebase_index_fts(rowid, file_path, "
-                    "symbol_name, content) VALUES (?, ?, ?, ?)",
-                    (rowid, file_path, symbol_name, sym_content),
-                )
-                count += 1
-
-            conn.commit()
-            return count
-        finally:
-            conn.close()
 
     @staticmethod
     def _extract_symbols_from_source(

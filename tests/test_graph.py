@@ -26,12 +26,12 @@ def test_graph_runs_end_to_end():
     from src.rules import registry
 
     mock_llm = MagicMock()
-    mock_llm.chat.side_effect = [
-        json.dumps({
+    mock_llm.chat_json.side_effect = [
+        {
             "summary": "test", "plan": ["hardcoded_secret", "unsafe_deserialize", "command_injection"],
             "risk_areas": [],
-        }),
-        json.dumps({
+        },
+        {
             "risks": [{
                 "title": "Security Issues",
                 "category": "security", "severity": "critical",
@@ -41,12 +41,12 @@ def test_graph_runs_end_to_end():
                 "line_range": [2, 4], "risk_score": 0.95,
             }],
             "overall_risk_score": 0.95,
-        }),
-        json.dumps({
+        },
+        {
             "needs_more_analysis": False,
             "additional_tools_needed": [],
             "reason": "Sufficient", "coverage_assessment": "100%",
-        }),
+        },
     ]
     mock_rag = MagicMock()
     mock_rag.search_history.return_value = []

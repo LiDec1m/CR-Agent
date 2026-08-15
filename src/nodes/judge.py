@@ -37,8 +37,10 @@ class JudgeNode:
             f"Codebase context:\n{json.dumps(state.rag_context.get('codebase', {}))}"
         )
         try:
-            response = json.loads(self.llm.chat("You are a code risk judge.", prompt))
-            raw_risks = response.get("risks", [])
+            response = self.llm.chat_json(
+                "You are a code risk judge.", prompt
+            )
+            raw_risks = response.get("risks", []) if response else []
         except Exception:
             raw_risks = []
 

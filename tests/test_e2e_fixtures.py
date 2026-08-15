@@ -58,7 +58,8 @@ def _mock_llm(plan, risks, reflection_done=True, extra_reflection=None):
             "additional_tools_needed": [],
             "reason": "Sufficient", "coverage_assessment": "100%",
         }))
-    llm.chat.side_effect = responses
+    llm.chat_json.side_effect = [json.loads(r) for r in responses]
+    # (nodes call chat_json, which returns parsed dicts)
     return llm
 
 
@@ -250,18 +251,18 @@ class TestE2EMaxRounds:
         risks = []
         llm = MagicMock()
         # Planner, Judge, then 3 reflections all saying "need more"
-        llm.chat.side_effect = [
-            json.dumps({"summary": "test", "plan": plan, "risk_areas": []}),
-            json.dumps({"risks": [], "overall_risk_score": 0.0}),
-            json.dumps({"needs_more_analysis": True,
-                        "additional_tools_needed": ["hardcoded_secret"],
-                        "reason": "more", "coverage_assessment": "30%"}),
-            json.dumps({"needs_more_analysis": True,
-                        "additional_tools_needed": ["command_injection"],
-                        "reason": "more", "coverage_assessment": "50%"}),
-            json.dumps({"needs_more_analysis": True,
-                        "additional_tools_needed": ["unsafe_deserialize"],
-                        "reason": "more", "coverage_assessment": "70%"}),
+        llm.chat_json.side_effect = [
+            {"summary": "test", "plan": plan, "risk_areas": []},
+            {"risks": [], "overall_risk_score": 0.0},
+            {"needs_more_analysis": True,
+             "additional_tools_needed": ["hardcoded_secret"],
+             "reason": "more", "coverage_assessment": "30%"},
+            {"needs_more_analysis": True,
+             "additional_tools_needed": ["command_injection"],
+             "reason": "more", "coverage_assessment": "50%"},
+            {"needs_more_analysis": True,
+             "additional_tools_needed": ["unsafe_deserialize"],
+             "reason": "more", "coverage_assessment": "70%"},
         ]
         rag, ltm = _mock_deps()
         graph = build_graph(llm, rag, ltm, registry, max_rounds=3)
