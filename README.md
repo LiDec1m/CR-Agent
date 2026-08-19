@@ -4,7 +4,7 @@
 
 ## 特性
 
-- **混合确定性+概率性架构**：20 条 AST/正则确定性规则提供可解释证据链，LLM 做高层语义判定
+- **混合确定性+概率性架构**：21 条 AST/正则确定性规则提供可解释证据链，LLM 做高层语义判定
 - **五节点 LangGraph StateGraph**：Planner → Tool Router → Judge → Reflection → Reporter，条件边实现反思回环，Reporter 终点节点保证报告永不缺失
 - **RAG 知识增强**：安全知识库 + 历史风险检索 + 代码库上下文检索（Embedding + FTS5 混合检索 + RRF 融合）
 - **SQLite 双层记忆**：短期 Checkpointer + 长期反馈表
@@ -76,7 +76,7 @@ code-risk-agent/
 ├── src/
 │   ├── models/          # 数据模型 (enums, state)
 │   ├── parsers/         # Git Diff 解析器
-│   ├── rules/           # 20 条确定性规则 + ToolRegistry
+│   ├── rules/           # 21 条确定性规则 + ToolRegistry
 │   ├── llm/             # LLM + Embedding 客户端
 │   ├── rag/             # RAG 检索器 + 索引器
 │   ├── memory/          # 短期 Checkpointer + 长期反馈表

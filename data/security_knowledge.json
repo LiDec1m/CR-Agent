@@ -1,0 +1,391 @@
+[
+  {
+    "title": "SQL Injection Prevention",
+    "category": "security",
+    "rule_id": "SEC001",
+    "content": "SQL injection occurs when user-controlled input is concatenated directly into a SQL query string. Attackers can manipulate the query to read sensitive data, modify records, or execute administrative operations. Never use string formatting or concatenation to build SQL queries with untrusted input.",
+    "best_practice": "Use parameterized queries or prepared statements. In Python, use cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,)) instead of f-strings or % formatting.",
+    "references": [
+      "https://owasp.org/www-community/attacks/SQL_Injection",
+      "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html"
+    ]
+  },
+  {
+    "title": "SQL Injection: Raw String Concatenation in sqlite3/psycopg2",
+    "category": "security",
+    "rule_id": "SEC001",
+    "content": "Concatenating or f-string-formatting user input directly into cursor.execute() SQL strings. Attackers can terminate the quote with a single quote and append arbitrary SQL to read other tables, modify records, or in some backends execute shell commands. Typical in scripts and management commands using raw DB-API connections instead of an ORM.",
+    "best_practice": "Always use DB-API parameter markers: cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,)). Never build SQL with % or f-strings when any value originates from user input. For dynamic identifiers (table/column names), validate against an explicit whitelist dict.",
+    "references": [
+      "https://docs.python.org/3/library/sqlite3.html#sqlite3-placeholders",
+      "https://www.psycopg.org/docs/usage.html#passing-parameters-to-sql-queries"
+    ]
+  },
+  {
+    "title": "SQL Injection: Django ORM raw() / extra() Bypass",
+    "category": "security",
+    "rule_id": "SEC001",
+    "content": "Django ORM filter() calls are parameterized by default, but .raw(), .extra(where=/select=) and direct cursor.execute() bypass that protection. Common pattern: admin dashboards or list views that accept a sort field or filter expression from the query string and interpolate it into a raw query.",
+    "best_practice": "Prefer pure ORM expressions (filter, order_by with validated field names). If raw SQL is unavoidable, pass parameters separately: Model.objects.raw('SELECT * FROM app_model WHERE owner_id = %s', [user_id]). Validate dynamic column names against Model._meta.get_field().",
+    "references": [
+      "https://docs.djangoproject.com/en/stable/topics/db/sql/",
+      "https://docs.djangoproject.com/en/stable/ref/models/querysets/#extra"
+    ]
+  },
+  {
+    "title": "SQL Injection: f-string Interpolation in SQLAlchemy text()",
+    "category": "security",
+    "rule_id": "SEC001",
+    "content": "sqlalchemy.text() provides bound parameters (:name), but interpolating values with f-strings or str.format() into the text() argument defeats the mechanism entirely. Frequently seen in FastAPI endpoints building dynamic WHERE clauses from request query parameters.",
+    "best_practice": "Use bind parameters: text('SELECT * FROM orders WHERE status = :status').bindparams(status=order_status). Build dynamic conditions with the SQLAlchemy expression language (select().where(model.c.status == value)) instead of string assembly.",
+    "references": [
+      "https://docs.sqlalchemy.org/en/stable/core/tutorial.html#using-textual-sql",
+      "https://docs.sqlalchemy.org/en/stable/core/sqlelement.html"
+    ]
+  },
+  {
+    "title": "Hardcoded Secrets Detection",
+    "category": "security",
+    "rule_id": "SEC002",
+    "content": "Hardcoded passwords, API keys, tokens, and other secrets in source code are a critical security risk. Secrets committed to version control can be exposed even after removal, as history is retained. Automated tools and attackers scan repositories for leaked credentials.",
+    "best_practice": "Store secrets in environment variables or a secrets manager (e.g., AWS Secrets Manager, HashiCorp Vault). Use .env files with python-dotenv for local development and never commit .env files to version control.",
+    "references": [
+      "https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_password",
+      "https://docs.github.com/en/code-security/secret-scanning"
+    ]
+  },
+  {
+    "title": "Hardcoded Secrets: API Keys and Tokens in Source",
+    "category": "security",
+    "rule_id": "SEC002",
+    "content": "API keys, access tokens, and bearer credentials committed to source control. Unlike passwords, these are often long opaque strings prefixed by the provider (sk-, AKIA, ghp_, xoxb-) and end up in git history permanently even after removal from HEAD, requiring rotation.",
+    "best_practice": "Load secrets from environment variables or a secret manager (Vault, AWS Secrets Manager, cloud KMS). Add pattern-based pre-commit hooks (gitleaks, detect-secrets) to block commits. If a key was already committed, rotate it immediately — deleting the file does not purge git history.",
+    "references": [
+      "https://github.com/gitleaks/gitleaks",
+      "https://pre-commit.com/"
+    ]
+  },
+  {
+    "title": "Hardcoded Secrets: Database URLs and Connection Strings",
+    "category": "security",
+    "rule_id": "SEC002",
+    "content": "Connection strings like postgresql://admin:P@ssw0rd@db.internal:5432/prod embed both credentials and infrastructure topology in source code. They leak in stack traces, error logs, and git history, and often grant far broader privileges than application-level API keys.",
+    "best_practice": "Compose connection URLs at runtime from separate environment variables (DB_USER, DB_PASSWORD, DB_HOST) or inject a complete URL from a secret store. Keep the components out of code, config files committed to git, and log output. Use SQLAlchemy engine creation from URL object parts rather than string concatenation.",
+    "references": [
+      "https://docs.sqlalchemy.org/en/stable/core/engines.html#database-urls",
+      "https://12factor.net/config"
+    ]
+  },
+  {
+    "title": "Insecure Deserialization Prevention",
+    "category": "security",
+    "rule_id": "SEC004",
+    "content": "Deserializing untrusted data with pickle, yaml.load, or similar functions can lead to remote code execution. Attackers can craft malicious serialized objects that execute arbitrary code during deserialization.",
+    "best_practice": "Use safe serialization formats like JSON. If pickle is necessary, never deserialize untrusted input. Use yaml.safe_load instead of yaml.load. Consider using hmac signing to verify serialized data integrity.",
+    "references": [
+      "https://docs.python.org/3/library/pickle.html#module-pickle",
+      "https://owasp.org/www-community/attacks/Deserialization_of_untrusted_data"
+    ]
+  },
+  {
+    "title": "Insecure Deserialization: pickle.loads on Untrusted Data",
+    "category": "security",
+    "rule_id": "SEC004",
+    "content": "pickle can execute arbitrary constructors during unpickling, so pickle.loads() on bytes from a request body, cache server, or message queue is remote code execution by design. An attacker who can influence the payload controls which objects get instantiated with which arguments.",
+    "best_practice": "Never unpickle data that crosses a trust boundary. Use JSON or msgpack for interchange. If a cache must store Python objects, sign the payload (HMAC) or restrict with pickle with custom Unpickler overriding find_class to an allowlist. Document that cached blobs are trusted-input-only.",
+    "references": [
+      "https://docs.python.org/3/library/pickle.html#restriction-of-globals",
+      "https://owasp.org/www-community/vulnerabilities/Deserialization_of_untrusted_data"
+    ]
+  },
+  {
+    "title": "Insecure Deserialization: yaml.load Without SafeLoader",
+    "category": "security",
+    "rule_id": "SEC004",
+    "content": "yaml.load() with the default Loader resolves arbitrary Python object tags (!!python/object), allowing object instantiation during parsing. Config files, user-supplied YAML uploads, and CI pipeline definitions parsed this way lead to full RCE with a single crafted tag.",
+    "best_practice": "Always use yaml.safe_load(data) or yaml.load(data, Loader=yaml.SafeLoader) which supports only standard YAML tags. Audit dependencies pulling pyyaml < 5.1 where the default was unsafe. If custom tags are genuinely needed, register an explicit constructor on SafeLoader rather than switching to unsafe loaders.",
+    "references": [
+      "https://msg-yaml-readthedocs-io.translate.goog/en/stable/loaders.html",
+      "https://github.com/yaml/pyyaml/wiki/PyYAML-yaml.load(input)-Deprecation"
+    ]
+  },
+  {
+    "title": "Cyclomatic Complexity Reduction",
+    "category": "complexity",
+    "rule_id": "CX002",
+    "content": "High cyclomatic complexity indicates too many independent execution paths in a function, making it difficult to test, understand, and maintain. Functions with complexity above 10 are considered risky and should be refactored.",
+    "best_practice": "Break down complex functions into smaller, single-responsibility helpers. Use early returns (guard clauses) to reduce nesting. Replace nested conditionals with polymorphism or lookup tables. Target complexity below 10 per function.",
+    "references": [
+      "https://en.wikipedia.org/wiki/Cyclomatic_complexity",
+      "https://refactoring.guru/refactoring/techniques/decompose-conditional"
+    ]
+  },
+  {
+    "title": "Nested Loop Depth Control",
+    "category": "complexity",
+    "rule_id": "CX003",
+    "content": "Deeply nested loops make code hard to read, test, and debug. Each level of nesting multiplies the cognitive load and the number of edge cases. Nesting beyond 3 levels is generally considered problematic.",
+    "best_practice": "Extract inner loops into separate functions. Use guard clauses and early continues to flatten the structure. Consider using comprehensions, itertools, or higher-order functions like map and filter to reduce explicit nesting.",
+    "references": [
+      "https://refactoring.guru/refactoring/techniques/replace-nested-conditional-with-guard-clauses",
+      "https://docs.python.org/3/library/itertools.html"
+    ]
+  },
+  {
+    "title": "Function Length Management",
+    "category": "complexity",
+    "rule_id": "CX001",
+    "content": "Excessively long functions (typically over 50 lines) are harder to understand, test, and maintain. They often violate the Single Responsibility Principle and tend to accumulate technical debt over time.",
+    "best_practice": "Extract logical sections into named helper functions. Each function should do one thing well. Use the Extract Function refactoring pattern. Aim for functions that fit on a single screen (approximately 20-30 lines).",
+    "references": [
+      "https://refactoring.guru/extract-function",
+      "https://clean-code-developer.com/d grades/grade-1/"
+    ]
+  },
+  {
+    "title": "Null Reference Safety",
+    "category": "bug_risk",
+    "rule_id": "BUG004",
+    "content": "Accessing attributes or calling methods on None (null) values causes runtime errors. Missing null checks before accessing optional values, dictionary keys, or function return values is a common source of crashes.",
+    "best_practice": "Use defensive programming: check for None explicitly, use the walrus operator (:=) for safe defaults, prefer dict.get(key, default) over direct access, and use Optional type hints with mypy to catch issues at type-check time.",
+    "references": [
+      "https://docs.python.org/3/library/typing.html#typing.Optional",
+      "https://realpython.com/null-in-python/"
+    ]
+  },
+  {
+    "title": "Null Reference: Dict.get() Result Used Without Default",
+    "category": "bug_risk",
+    "rule_id": "BUG004",
+    "content": "value = request.headers.get('X-User-Id') returns None when the header is absent, and subsequent code that indexes, slices, or calls methods on value crashes with TypeError/AttributeError. The same pattern applies to os.environ.get(), config.get(), and dict lookups on payloads from other services.",
+    "best_practice": "Provide a fallback at the call site: value = data.get('key', default) when a default makes sense, or check explicitly: if value is None: return early / raise a domain-specific error. For required request fields, validate with a schema library (pydantic) so missing keys fail fast with clear messages instead of crashing deep in business logic.",
+    "references": [
+      "https://docs.python.org/3/library/stdtypes.html#dict.get",
+      "https://fastapi.tiangolo.com/tutorial/body/"
+    ]
+  },
+  {
+    "title": "Null Reference: First Element of Possibly-Empty Query Result",
+    "category": "bug_risk",
+    "rule_id": "BUG004",
+    "content": "user = session.query(User).filter_by(id=uid).first() yields None when no row matches, and user.name one line later raises AttributeError. The empty-result path is rare in tests (fixtures usually seed the row), so the bug ships to production and fires on edge traffic such as deleted or not-yet-created records.",
+    "best_practice": "Handle the None case at the boundary: if user is None: abort(404) or return a typed error. Prefer .one_or_none() over .first() when the query should match exactly one row — it surfaces data duplication bugs instead of silently hiding them.",
+    "references": [
+      "https://docs.sqlalchemy.org/en/stable/orm/queryguide/api.html",
+      "https://peps.python.org/pep-0604/"
+    ]
+  },
+  {
+    "title": "Mutable Default Argument Prevention",
+    "category": "bug_risk",
+    "rule_id": "BUG002",
+    "content": "Using mutable objects (lists, dicts, sets) as default argument values in Python is a well-known pitfall. The default value is evaluated once at function definition time and shared across all calls that use the default, leading to unexpected state leakage between calls.",
+    "best_practice": "Use None as the default and initialize the mutable inside the function body. For example: def func(items=None): items = items or []. This ensures each call gets a fresh object.",
+    "references": [
+      "https://docs.python.org/3/tutorial/controlflow.html#default-argument-values",
+      "https://stackoverflow.com/questions/1132941/least-astonishment-and-the-mutable-default-argument"
+    ]
+  },
+  {
+    "title": "N+1 Query Optimization",
+    "category": "performance",
+    "rule_id": "PERF002",
+    "content": "The N+1 query problem occurs when code executes one query to fetch a list of items, then N additional queries to fetch related data for each item. This results in excessive database round-trips and severe performance degradation as the list size grows.",
+    "best_practice": "Use JOINs or batch fetching (select_related / prefetch_related in Django ORM, eager loading in SQLAlchemy). Fetch all related data in a single query using IN clauses. Always verify query counts in tests.",
+    "references": [
+      "https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-related",
+      "https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html"
+    ]
+  },
+  {
+    "title": "N+1 Query: Loop Over ORM Relations",
+    "category": "performance",
+    "rule_id": "PERF002",
+    "content": "Iterating a parent queryset and touching a lazy-loaded relation per row (for order in orders: order.customer.name) issues one SELECT per iteration. With 1000 orders this becomes 1001 queries; latency grows linearly and connection pools exhaust under load.",
+    "best_practice": "Eager-load relations in one query: Django uses select_related('customer') for FKs and prefetch_related() for M2M; SQLAlchemy uses selectinload(Order.customer) or joinedload. Verify with query counting in tests (assertNumQueries in Django, echo=True in SQLAlchemy).",
+    "references": [
+      "https://docs.djangoproject.com/en/stable/ref/models/querysets/#select-related",
+      "https://docs.sqlalchemy.org/en/stable/orm/queryguide/relationships.html"
+    ]
+  },
+  {
+    "title": "N+1 Query: Lookup Inside Loop Instead of Batch Fetch",
+    "category": "performance",
+    "rule_id": "PERF002",
+    "content": "Fetching per-item inside a loop (for id in ids: row = table.get(id)) instead of one batched query. Often appears when refactoring a single-record endpoint into a list endpoint — the per-record data access is copy-pasted into the loop without consolidation.",
+    "best_practice": "Batch at the data layer: one IN query (Model.objects.filter(id__in=ids) / session.query(Model).filter(Model.id.in_(ids))), then build a dict {id: row} and look up in memory. For writes, use bulk_create() / add_all() with a single commit.",
+    "references": [
+      "https://docs.djangoproject.com/en/stable/ref/models/querysets/#in",
+      "https://docs.sqlalchemy.org/en/stable/orm/bulk_operations.html"
+    ]
+  },
+  {
+    "title": "Inefficient Loop Optimization",
+    "category": "performance",
+    "rule_id": "PERF001",
+    "content": "Inefficient loops can cause significant performance issues. Common problems include: calling len() inside loop conditions unnecessarily, using linear search where a set/dict lookup would be O(1), and performing I/O or expensive computations inside loops that could be cached.",
+    "best_practice": "Use set or dict for O(1) membership tests instead of lists. Move invariant computations outside the loop. Use built-in functions like sum(), any(), all() which are implemented in C and faster than manual Python loops. Consider list comprehensions over explicit loops.",
+    "references": [
+      "https://wiki.python.org/moin/TimeComplexity",
+      "https://docs.python.org/3/howto/optimization.html"
+    ]
+  },
+  {
+    "title": "Missing Docstring Detection",
+    "category": "maintainability",
+    "rule_id": "MAIN001",
+    "content": "Public functions, classes, and modules without docstrings make it difficult for other developers to understand the purpose, parameters, return values, and exceptions. This increases onboarding time and the risk of misuse.",
+    "best_practice": "Write docstrings for all public modules, classes, and functions following PEP 257. Use Google-style or NumPy-style docstring formats consistently. Document parameters, return types, raised exceptions, and usage examples. Use tools like pydocstyle to verify.",
+    "references": [
+      "https://www.python.org/dev/peps/pep-0257/",
+      "https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings"
+    ]
+  },
+  {
+    "title": "Error Handling Coverage",
+    "category": "maintainability",
+    "rule_id": "BUG001",
+    "content": "Broad except clauses (except Exception or bare except) swallow errors silently, making bugs difficult to diagnose. Missing error handling for network calls, file I/O, and external services leads to unhelpful crashes. Poor error recovery reduces application resilience.",
+    "best_practice": "Catch specific exceptions rather than broad ones. Log exceptions with context using the logging module. Use context managers (with statements) for resource cleanup. Consider retry logic with exponential backoff for transient failures. Document which exceptions a function may raise.",
+    "references": [
+      "https://docs.python.org/3/tutorial/errors.html",
+      "https://docs.python.org/3/library/logging.html"
+    ]
+  },
+  {
+    "title": "None-Safe Access Prevention",
+    "category": "bug_risk",
+    "rule_id": "BUG004",
+    "content": "Variables annotated as Optional[X] or X | None may hold None at runtime. Accessing attributes, calling methods, or passing such variables to operations that require a concrete value without a None check causes AttributeError or TypeError at runtime. These failures often occur on rarely-exercised code paths such as empty query results or missing configuration, so they escape unit tests and surface in production.",
+    "best_practice": "Guard Optional values with explicit None checks before use, or use pattern matching (match/case) to destructure safely. Prefer the walrus operator (if (v := maybe_none) is not None:) for concise guards. Return early on None instead of nesting deep conditionals. For collections, return empty containers instead of None. Use type checkers like mypy with strict Optional checking enabled.",
+    "references": [
+      "https://docs.python.org/3/library/typing.html#typing.Optional",
+      "https://mypy.readthedocs.io/en/stable/kinds_of_types.html#optional-types-and-the-none-type",
+      "https://peps.python.org/pep-0604/"
+    ]
+  },
+  {
+    "title": "Code Duplication Elimination",
+    "category": "maintainability",
+    "rule_id": "MAIN002",
+    "content": "Duplicated code lines or repeated patterns within the same change indicate copy-paste programming. Duplication multiplies maintenance cost: a bug fixed in one copy may survive in others, and behavior drift between copies creates subtle inconsistencies. Duplicated blocks longer than a few lines are strong candidates for extraction.",
+    "best_practice": "Extract repeated logic into functions, methods, or classes with meaningful names. Use higher-order functions or decorators when the duplication varies only in small parameters. Apply the Rule of Three: tolerate duplication once, refactor at the second occurrence. Use tools like pylint's duplicate-code checker or SonarQube to detect duplication across the codebase.",
+    "references": [
+      "https://refactoring.com/catalog/extractFunction.html",
+      "https://pylint.readthedocs.io/en/latest/user_guide/messages/warning/R0801.html",
+      "https://en.wikipedia.org/wiki/Rule_of_three_(computer_programming)"
+    ]
+  },
+  {
+    "title": "Python Naming Convention Consistency",
+    "category": "style",
+    "rule_id": "STY001",
+    "content": "PEP 8 prescribes snake_case for function and method names, PascalCase for classes, and UPPER_SNAKE_CASE for constants. camelCase function names or Capitalized function definitions signal either ported code from another language (Java, JavaScript) or inconsistent team conventions, which slows comprehension and confuses automated tooling.",
+    "best_practice": "Name functions and methods in snake_case, classes in PascalCase, and constants in UPPER_SNAKE_CASE per PEP 8. Keep names descriptive but concise; avoid abbreviations that are not domain-standard. Use linters like flake8, ruff, or pylint with naming checks enabled in CI to enforce conventions automatically.",
+    "references": [
+      "https://peps.python.org/pep-0008/#function-and-variable-names",
+      "https://docs.astral.sh/ruff/rules/#pycodestyle-e-w",
+      "https://flake8.pycqa.org/en/latest/"
+    ]
+  },
+  {
+    "title": "Line Length Management",
+    "category": "style",
+    "rule_id": "STY003",
+    "content": "Excessively long lines hurt readability: they force horizontal scrolling in editors and code review tools, break side-by-side diff views, and often indicate doing too much in one statement (deeply chained calls, long condition lists, or excessive arguments). PEP 8 recommends limiting lines to 79 characters, while many modern teams adopt 100 or 120.",
+    "best_practice": "Pick a line-length limit (79 for library code, 100-120 common for applications) and enforce it with black, ruff format, or autopep8 in CI. Break long expressions using implied line continuation inside parentheses, or explicit backslash continuation when necessary. Extract long conditions into named variables (is_valid = ...) for readability, and limit function parameters using dataclasses or keyword-only arguments.",
+    "references": [
+      "https://peps.python.org/pep-0008/#maximum-line-length",
+      "https://black.readthedocs.io/en/stable/the_basics.html#line-length",
+      "https://docs.astral.sh/ruff/formatter/"
+    ]
+  },
+  {
+    "title": "Unused Import Cleanup",
+    "category": "bug_risk",
+    "rule_id": "BUG003",
+    "content": "Imported modules or names that are never referenced in the file inflate the module's namespace, slow import time, and mask real dependencies. Reviewers waste time reasoning about why a module is imported, and linters or IDE auto-import often accumulate unused imports over time. They also create hidden coupling that breaks when the unused dependency is removed from the environment.",
+    "best_practice": "Remove unused imports as soon as they become unused rather than deferring cleanup. Use tools to detect them automatically: ruff's F401 rule, pylint's W0611, or pyflakes. Configure IDE organize-imports on save. Keep __init__.py re-exports explicit with __all__ so intentional re-exports are not flagged.",
+    "references": [
+      "https://docs.astral.sh/ruff/rules/#pyflakes-f",
+      "https://pylint.readthedocs.io/en/latest/user_guide/messages/warning/W0611.html"
+    ]
+  },
+  {
+    "title": "Command Injection Prevention",
+    "category": "security",
+    "rule_id": "SEC003",
+    "content": "Passing user-controlled values into shell commands — os.system() with string interpolation, subprocess.run(shell=True) with concatenated arguments, or os.popen with f-strings — lets an attacker append shell metacharacters (;, |, &&, $(), backticks) to execute arbitrary commands. Even seemingly benign inputs like filenames or sort keys become injection vectors inside a shell string.",
+    "best_practice": "Avoid shell=True entirely: call subprocess.run(['ls', '-l', user_dir]) with an argument list, which bypasses shell parsing and makes metacharacters inert. When the command itself must be chosen at runtime, map allowed commands through an explicit dict. Validate user input against a strict pattern (e.g. ^[a-zA-Z0-9._-]+$) before any use near a shell.",
+    "references": [
+      "https://docs.python.org/3/library/subprocess.html#security-considerations",
+      "https://owasp.org/www-community/attacks/Command_Injection"
+    ]
+  },
+  {
+    "title": "Magic Number Extraction",
+    "category": "style",
+    "rule_id": "STY002",
+    "content": "Numeric literals with unexplained meaning embedded directly in expressions (thresholds 86400, limits 500, status codes 404) force every reader to reverse-engineer intent from context. When the same value must change, scattered copies are updated inconsistently, producing subtle bugs. The canonical example is 86400 appearing in five places when a day-seconds constant belongs in one.",
+    "best_practice": "Extract named constants at module level (SECONDS_PER_DAY = 86400) or into a shared constants module. Values that are part of a domain protocol (HTTP status codes) can use an enum or a library (http.HTTPStatus). Zero, one, and well-known idioms (2 in binary search) are acceptable literals; the rule of thumb is: if a reviewer would ask 'why this number?', name it.",
+    "references": [
+      "https://refactoring.com/catalog/replaceMagicNumberWithSymbolicConstant.html",
+      "https://docs.astral.sh/ruff/rules/#flake8-errmsg"
+    ]
+  },
+  {
+    "title": "String Concatenation in Loop",
+    "category": "performance",
+    "rule_id": "PERF003",
+    "content": "Repeated string concatenation with += inside a loop creates a new string object each iteration because Python strings are immutable, giving O(n^2) total copying. For a few hundred iterations this is invisible; for building large outputs (log lines, CSV rows, response bodies) it dominates runtime and allocates heavily.",
+    "best_practice": "Accumulate parts in a list and join once: parts.append(line); result = '\\n'.join(parts) — O(n) total. For streaming output use io.StringIO or write directly to the destination. In modern CPython (3.6+), += on a string sometimes hits an in-place optimization, but it is implementation-specific and never faster than join; do not rely on it.",
+    "references": [
+      "https://docs.python.org/3/library/stdtypes.html#str.join",
+      "https://wiki.python.org/moin/PythonSpeed/PerformanceTips"
+    ]
+  },
+  {
+    "title": "TODO/FIXME Marker Management",
+    "category": "maintainability",
+    "rule_id": "MAIN003",
+    "content": "TODO, FIXME, HACK, and XXX comments mark acknowledged but unfinished work. They are useful short-term, but accumulate silently: markers added before a release survive for years, nobody owns them, and the debt they describe grows. A FIXME that outlives its author becomes an undocumented landmine for the next maintainer.",
+    "best_practice": "Convert markers into tracked issues at commit time: reference the ticket in the comment (TODO(TICKET-123): remove legacy path) so the context is recoverable. Keep markers actionable and specific; reject vague ones like TODO: improve. Sweep the codebase periodically — grep for the markers and either fix, ticket, or delete each one. Configure linters (flake8-todos, pylint W0511) to surface them in CI.",
+    "references": [
+      "https://pylint.readthedocs.io/en/latest/user_guide/messages/warning/W0511.html",
+      "https://docs.astral.sh/ruff/rules/#fixme"
+    ]
+  },
+  {
+    "title": "Removed Security Guards: Validation and Permission Checks",
+    "category": "security",
+    "rule_id": "SEC005",
+    "content": "Deleting or weakening input validation, permission checks, or authentication guards is a high-risk change shape that added-line rules cannot see. Attackers actively look for commits that remove assert statements, drop if not user.is_admin checks, or bypass verify_permission calls, because the remaining code looks clean while the protection is gone. Deletions are often made to 'fix a failing test' or 'unblock a flaky flow', which is exactly when review scrutiny is lowest.",
+    "best_practice": "Treat any removed guard as relocated-until-proven: require the PR to show where the validation moved (centralized middleware, schema-level constraint, type system). Never delete an assert to make a test pass; fix the condition instead. Keep auth checks in dedicated middleware/decorators so business-logic diffs cannot silently remove them.",
+    "references": [
+      "https://owasp.org/www-community/controls/Access_Control",
+      "https://docs.python.org/3/reference/simple_stmts.html#the-assert-statement"
+    ]
+  },
+  {
+    "title": "Removed Lock Release / finally Cleanup Causing Deadlock or Leak",
+    "category": "security",
+    "rule_id": "SEC005",
+    "content": "Removing lock.release(), unlock(), or a finally: block that guarantees resource cleanup converts correct code into deadlock/leak-prone code under concurrency. The deletion usually passes all single-threaded tests, so CI gives false confidence; the failure only appears in production under load, as a hung worker pool or an exhausted connection pool. Similar risk applies to removed close(), rollback(), or connection-pool return calls.",
+    "best_practice": "Prefer context managers (with lock: / with closing(...):) over manual release so the release cannot be deleted without deleting the acquisition too. If manual release must stay, pair every acquire with a try/finally in the same function and add a stress test that hits the code path concurrently.",
+    "references": [
+      "https://docs.python.org/3/library/threading.html#lock-objects",
+      "https://docs.python.org/3/library/contextlib.html"
+    ]
+  },
+  {
+    "title": "Semantic Deletion: Weakening a Condition Instead of Removing It",
+    "category": "security",
+    "rule_id": "SEC005",
+    "content": "The most subtle form of guard removal keeps the line count unchanged: a one-line edit turns if user.is_admin into if True, narrows a permission scope check, or replaces a strict regex validation with a laxer one. The diff shows an added line, so deletion-scanning rules stay quiet, but the security property is equivalent to deleting the original check. Compare the removed and added lines as a pair, not in isolation.",
+    "best_practice": "In review tooling, flag changed lines whose removed version contains guard vocabulary (validate, permission, admin, authenticate, sanitize) regardless of what replaces them. For authorization logic, prefer centralized policy objects (e.g. allow-list of roles) over inline conditions, so weakening a check requires touching an auditable policy file.",
+    "references": [
+      "https://owasp.org/www-community/Access_Control_Cheat_Sheet",
+      "https://cwe.mitre.org/data/definitions/284.html"
+    ]
+  }
+]

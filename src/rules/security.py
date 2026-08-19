@@ -1,4 +1,4 @@
-"""Security rules: SEC001-SEC004."""
+"""Security rules: SEC001-SEC005."""
 
 from __future__ import annotations
 
@@ -21,6 +21,22 @@ _SHELL_TRUE_RE = re.compile(r"shell\s*=\s*True")
 _EVAL_RE = re.compile(r"\beval\s*\(")
 _EXEC_RE = re.compile(r"\bexec\s*\(")
 _PICKLE_RE = re.compile(r"pickle\.loads?\s*\(")
+
+# Patterns that indicate a removed line was a security/robustness guard.
+# Deleting such lines (e.g. validation, permission checks, lock release,
+# defensive raises) is a high-risk change shape that added-line rules
+# cannot see.
+_REMOVED_GUARD_RES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^\s*assert\b"), "assert guard"),
+    (re.compile(r"^\s*raise\b"), "defensive raise"),
+    (re.compile(r"^\s*if\s+not\b.*:\s*(#.*)?$"), "negated guard clause"),
+    (re.compile(r"^\s*(with\b.*lock|finally\s*:)|\.release\(|\.unlock\("), "lock/resource release"),
+    (re.compile(
+        r"\b(validate|sanitize|verify|permission|authorize|authenticate|"
+        r"is_admin|check_auth|escape)\w*\s*\(",
+        re.IGNORECASE,
+    ), "validation/authorization call"),
+]
 
 
 def _make_evidence(
@@ -112,7 +128,43 @@ def unsafe_deserialize(hunk: HunkInfo) -> list[Evidence]:
     return results
 
 
+def removed_security_check(hunk: HunkInfo) -> list[Evidence]:
+    """Flag removed lines that look like security/robustness guards.
+
+    Low-confidence by design: deletion may be a benign refactor, so this
+    only surfaces the suspicion for the Judge to adjudicate with context.
+    Line numbers refer to the OLD file (removed lines have no new-file
+    position); the message says so explicitly.
+    """
+    results: list[Evidence] = []
+    for line in hunk.removed_lines:
+        if line.change_type != ChangeType.REMOVED:
+            continue
+        for pattern, desc in _REMOVED_GUARD_RES:
+            if pattern.search(line.content):
+                old_ln = line.old_line_no or hunk.old_start or 0
+                results.append(
+                    Evidence(
+                        source="removed_security_check", rule_id="SEC005",
+                        category=RiskCategory.SECURITY,
+                        severity=Severity.MEDIUM,
+                        message=(
+                            f"Removed line looks like a {desc} "
+                            f"(old line {old_ln}); verify the guard is "
+                            f"relocated, not dropped"
+                        ),
+                        line_range=(old_ln, old_ln),
+                        snippet=line.content,
+                        confidence=0.6,
+                        source_type="deterministic",
+                    )
+                )
+                break  # one evidence per removed line is enough
+    return results
+
+
 registry.register("sql_injection", sql_injection)
 registry.register("hardcoded_secret", hardcoded_secret)
 registry.register("command_injection", command_injection)
 registry.register("unsafe_deserialize", unsafe_deserialize)
+registry.register("removed_security_check", removed_security_check)

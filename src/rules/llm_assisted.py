@@ -26,19 +26,25 @@ def create_llm_assisted_rule(llm: LLMClient) -> Any:
 
     def llm_assisted(hunk: HunkInfo) -> list[Evidence]:
         code = hunk.added_code
-        if not code.strip():
+        removed = "\n".join(l.content for l in hunk.removed_lines)
+        if not code.strip() and not removed.strip():
             return []
 
         prompt = (
             "Analyze this code change for risks that deterministic rules "
             "might miss (e.g. logic errors, race conditions, resource "
             "leaks, missing input validation, error handling gaps). "
+            "If removed lines are provided, check specifically whether the "
+            "deletion drops a validation, permission check, or resource "
+            "release without re-adding it elsewhere. "
             "Return JSON only: "
             "{\"evidences\": [{\"rule_id\": str, \"category\": str, "
             "\"severity\": str, \"message\": str, \"line_no\": int}]}\n\n"
             f"File: {hunk.file_path}\n"
-            f"Added code:\n{code}"
+            f"Added code:\n{code or '(none)'}"
         )
+        if removed.strip():
+            prompt += f"\n\nRemoved code (old lines):\n{removed}"
 
         try:
             response = llm.chat_json(

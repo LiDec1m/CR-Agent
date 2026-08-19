@@ -3,9 +3,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import uuid
+from logging.handlers import RotatingFileHandler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -26,6 +28,51 @@ from src.rules import registry
 from src.graph import build_graph
 
 console = Console()
+logger = logging.getLogger(__name__)
+
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+_LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "logs")
+
+
+def _configure_logging() -> None:
+    """Wire library loggers (src.* uses plain logging.getLogger) to handlers.
+
+    Idempotent: skips if the root logger already has handlers (e.g. pytest
+    or an embedding application has configured logging itself).
+
+    - RotatingFileHandler at DEBUG -> data/logs/agent.log (max 5MB x 3 backups)
+      so chat_json per-attempt debug records are always persisted.
+    - StreamHandler(stderr) at WARNING (override via CODE_RISK_LOG_LEVEL)
+      so users are disturbed only when an LLM call chain degrades.
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        return
+    root.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(_LOG_FORMAT)
+
+    os.makedirs(_LOG_DIR, exist_ok=True)
+    file_handler = RotatingFileHandler(
+        os.path.join(_LOG_DIR, "agent.log"),
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
+    root.addHandler(file_handler)
+
+    stderr_handler = logging.StreamHandler(sys.stderr)
+    stderr_handler.setLevel(
+        os.environ.get("CODE_RISK_LOG_LEVEL", "WARNING").upper()
+    )
+    stderr_handler.setFormatter(formatter)
+    root.addHandler(stderr_handler)
+
+    # Third-party HTTP clients are chatty at DEBUG; keep them at INFO so the
+    # file log stays focused on agent behaviour.
+    for noisy in ("httpx", "openai", "urllib3"):
+        logging.getLogger(noisy).setLevel(logging.INFO)
 
 
 def _init_components():
@@ -171,6 +218,7 @@ def _render_report(report, console: Console) -> None:
 @click.group()
 def cli():
     """Code Risk Agent — analyse git diffs for potential risks."""
+    _configure_logging()
 
 
 @cli.command()
@@ -203,6 +251,12 @@ def analyze(diff_file, diff_text, thread_id, repo, commit):
         sys.exit(0)
 
     thread_id = thread_id or str(uuid.uuid4())
+    # Run separator: one anchor line per run so multiple runs can be located
+    # in the shared log file by diff source and thread id.
+    logger.info(
+        "=== analyze run start | diff=%s | repo=%s | thread_id=%s ===",
+        diff_file or "<inline>", repo, thread_id,
+    )
 
     # -- Parse diff --
     hunks = GitDiffParser().parse(raw_diff)

@@ -114,6 +114,7 @@ def test_todo_fixme():
     assert results[0].rule_id == "MAIN003"
 
 
-def test_all_20_rules_registered():
+def test_all_21_rules_registered():
     names = registry.list_all()
-    assert len(names) == 20
+    assert len(names) == 21
+    assert "removed_security_check" in names

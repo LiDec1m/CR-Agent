@@ -54,9 +54,11 @@ class ToolRouterNode:
                 # context so AST rules can parse valid Python.
                 effective_hunk = self._enrich_hunk(hunk, codebase)
                 try:
-                    evidence_pool.extend(
-                        self.registry.execute(rule_name, effective_hunk)
-                    )
+                    evidences = self.registry.execute(rule_name, effective_hunk) or []
+                    for ev in evidences:
+                        if ev.file_path is None:
+                            ev = ev.model_copy(update={"file_path": hunk.file_path})
+                        evidence_pool.append(ev)
                 except Exception as exc:
                     logger.warning(
                         "Rule %s failed on %s:%s: %s: %s",
@@ -82,6 +84,7 @@ class ToolRouterNode:
                             snippet="",
                             confidence=0.3,
                             source_type="error",
+                            file_path=hunk.file_path,
                         )
                     )
 

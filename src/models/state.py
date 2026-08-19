@@ -60,6 +60,10 @@ class Evidence(BaseModel):
     snippet: Optional[str] = None
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     source_type: str = "deterministic"
+    # File the evidence was found in. Attached centrally by ToolRouter
+    # (rules only see one hunk at a time; Judge needs file attribution
+    # to map evidence to the right file in multi-file diffs).
+    file_path: Optional[str] = None
 
 
 class RiskItem(BaseModel):

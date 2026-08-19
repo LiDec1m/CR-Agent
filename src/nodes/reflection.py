@@ -29,6 +29,43 @@ class ReflectionNode:
         self.ltm = ltm
         self.max_rounds = max_rounds
 
+    def _build_coverage_digest(self, state: AgentState) -> str:
+        """Process-level coverage signals for the reflection prompt.
+
+        Summary only, never raw material: per-hunk evidence/risk density
+        (zero-evidence hunks are explicit coverage gaps) plus failed-rule
+        signals (error evidence means that rule's detection scope was a
+        blind spot this round). Feeding material (diff text, codebase
+        context, full evidence) here would drift this node into detection.
+        """
+        if not state.hunks:
+            return ""
+        lines: list[str] = []
+        for hunk in state.hunks:
+            n_ev = sum(
+                1 for e in state.evidence_pool
+                if e.file_path == hunk.file_path
+            )
+            n_risk = sum(
+                1 for r in state.risks
+                if r.file_path == hunk.file_path
+            )
+            lines.append(
+                f"- {hunk.file_path} hunk@{hunk.new_start} "
+                f"(+{hunk.new_count}/-{hunk.old_count}): "
+                f"{n_ev} evidences, {n_risk} risks"
+            )
+        digest = "Per-hunk coverage:\n" + "\n".join(lines)
+
+        failed = [
+            f"{e.source} on {e.file_path}"
+            for e in state.evidence_pool
+            if e.source_type == "error"
+        ]
+        if failed:
+            digest += "\nFailed rules (blind spots this round): " + ", ".join(failed)
+        return digest
+
     def __call__(self, state: AgentState) -> dict:
         new_round = state.reflection_round + 1
         if new_round > self.max_rounds:
@@ -80,6 +117,14 @@ class ReflectionNode:
             f"Risks: {json.dumps([risk.model_dump(mode='json') for risk in state.risks])}\n"
             f"Available rules: {json.dumps(registry.list_all())}"
         )
+        digest = self._build_coverage_digest(state)
+        if digest:
+            prompt += (
+                "\n\n" + digest + "\n"
+                "Hunks with 0 evidences are potential coverage gaps: "
+                "consider whether an available rule (or llm_assisted) "
+                "should have produced signals there."
+            )
         if cross_file_feedback:
             prompt += (
                 f"\n\nCross-file feedback (same rules were flagged in "
