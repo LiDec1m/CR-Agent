@@ -3,7 +3,7 @@
 This rule is registered dynamically (not at import time) because it needs
 an LLMClient instance. It is only triggered when the Reflection node
 decides that deterministic rules have insufficient coverage and suggests
-``"llm_assisted"`` in ``additional_tools_needed``.
+``"llm_assisted"`` in ``additional_tools_by_hunk``.
 
 The Planner node explicitly excludes this rule from the initial plan so
 it can never run in the first round.
@@ -15,6 +15,10 @@ from typing import Any
 
 from src.llm.client import LLMClient
 from src.models import Evidence, HunkInfo, RiskCategory, Severity
+
+
+class LLMAnalysisDegraded(RuntimeError):
+    """The LLM rule could not produce a reliable assessment for one hunk."""
 
 
 def create_llm_assisted_rule(llm: LLMClient) -> Any:
@@ -50,9 +54,15 @@ def create_llm_assisted_rule(llm: LLMClient) -> Any:
             response = llm.chat_json(
                 "You are a code risk analyzer.", prompt
             )
-            raw_evidences = response.get("evidences", []) if response else []
-        except Exception:
-            return []
+        except Exception as exc:
+            raise LLMAnalysisDegraded(
+                f"LLM analysis failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if response is None:
+            raise LLMAnalysisDegraded("LLM analysis returned no parseable JSON")
+        raw_evidences = response.get("evidences", [])
+        if not isinstance(raw_evidences, list):
+            raise LLMAnalysisDegraded("LLM analysis returned a non-list evidences field")
 
         results: list[Evidence] = []
         for ev in raw_evidences:

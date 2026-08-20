@@ -6,7 +6,9 @@ import ast
 import json
 
 from src.llm.client import LLMClient
-from src.models import AgentPhase, AgentState, RiskCategory, RiskItem, Severity
+from src.models import (
+    AgentPhase, AgentState, DismissedEvidence, RiskCategory, RiskItem, Severity,
+)
 from src.rag.retriever import RAGRetriever
 
 
@@ -188,10 +190,20 @@ class JudgeNode:
             "{\"risks\": [{\"title\": str, \"category\": str, "
             "\"severity\": str, \"description\": str, \"evidence_refs\": [int], "
             "\"suggestion\": str, \"file_path\": str, \"line_range\": [int, int], "
-            "\"risk_score\": float (0.0-1.0)}], \"overall_risk_score\": float (0.0-1.0)}.\n"
-            "Every risk MUST reference at least one evidence index in "
-            "evidence_refs; risks without valid evidence references will be "
-            "discarded.\n\n"
+            "\"risk_score\": float (0.0-1.0)}], "
+            "\"dismissed_evidence\": [{\"index\": int, \"reason\": str}], "
+            "\"overall_risk_score\": float (0.0-1.0)}.\n"
+            "Not all evidence constitutes a real risk. Before confirming any "
+            "evidence as a risk, VERIFY it against the provided codebase "
+            "context — check whether the flagged pattern is actually present "
+            "in the code, whether it is a false positive (e.g. test fixture, "
+            "documentation example, or the symbol is in fact used elsewhere), "
+            "and whether the severity is warranted given the context.\n"
+            "If an evidence item is a false positive or irrelevant, put its "
+            "index in dismissed_evidence with a reason — do NOT create a "
+            "risk for it. Every risk MUST reference at least one evidence "
+            "index in evidence_refs; risks without valid evidence references "
+            "will be discarded.\n\n"
             f"Evidence (reference by zero-based index; each item carries its own file_path):\n{json.dumps(evidence)}\n\n"
             f"Security knowledge:\n{json.dumps(security)}\n\n"
             f"Codebase context (diff-file symbols overlapping changed lines, plus cross-file symbols actually called from them):\n{json.dumps(codebase_ctx)}"
@@ -205,20 +217,52 @@ class JudgeNode:
             response = self.llm.chat_json(
                 "You are a code risk judge.", prompt
             )
-            raw_risks = response.get("risks", []) if response else []
         except Exception:
-            raw_risks = []
+            response = None
+
+        # Degradation path: no parseable judgment (empty, unparseable or
+        # truncated LLM output). Return WITHOUT the ``risks`` /
+        # ``dismissed_evidence`` keys: GraphState uses whole-value
+        # replacement for these fields, so returning empty lists would
+        # erase a previous round's valid adjudication. An unread judgment
+        # must never wipe an earlier one — omitting the keys preserves it.
+        if response is None:
+            rag_context = dict(state.rag_context)
+            rag_context["security"] = security_raw
+            return {
+                "phase": AgentPhase.REFLECTING,
+                "rag_context": rag_context,
+            }
+
+        raw_risks = response.get("risks", [])
+        raw_dismissed = response.get("dismissed_evidence", [])
+
+        # --- Parse dismissed evidence (index-validated) ---
+        dismissed_idx: set[int] = set()
+        dismissed: list[DismissedEvidence] = []
+        for d in raw_dismissed:
+            idx = d.get("index")
+            if isinstance(idx, int) and 0 <= idx < len(state.evidence_pool):
+                dismissed_idx.add(idx)
+                dismissed.append(DismissedEvidence(
+                    evidence=state.evidence_pool[idx],
+                    reason=d.get("reason", "Dismissed by judge"),
+                ))
 
         risks: list[RiskItem] = []
         for item in raw_risks:
             refs = item.get("evidence_refs", [])
-            chain = [
-                state.evidence_pool[index]
-                for index in refs
+            valid_refs = [
+                index for index in refs
                 if isinstance(index, int) and 0 <= index < len(state.evidence_pool)
             ]
-            # Zero-hallucination guard: LLM risks without a valid evidence
-            # reference are discarded rather than trusted as free findings.
+            # A risk must retain at least one non-dismissed valid reference.
+            # If the LLM both cites and dismisses an index, dismissal wins for
+            # that item; only its remaining evidence can support the risk.
+            surviving_refs = [index for index in valid_refs if index not in dismissed_idx]
+            chain = [state.evidence_pool[index] for index in surviving_refs]
+            # Zero-hallucination guard: after filtering dismissed / invalid
+            # refs, a risk must retain a real evidence chain.
             if not chain:
                 continue
             line_range = item.get("line_range")
@@ -253,6 +297,7 @@ class JudgeNode:
         rag_context["security"] = security_raw
         return {
             "risks": risks,
+            "dismissed_evidence": dismissed,
             "phase": AgentPhase.REFLECTING,
             "rag_context": rag_context,
         }

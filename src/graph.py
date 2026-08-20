@@ -23,23 +23,24 @@ from src.memory.long_term import LongTermMemory
 
 # -- State schema for LangGraph -------------------------------------------
 #
-# List fields annotated with ``operator.add`` are *accumulated* across
-# reflection rounds (evidence, executed rules, notes).  All other fields
-# use the default replacement strategy so each node's return value
-# overwrites the previous value.
+# List fields annotated with ``operator.add`` are accumulated across
+# reflection rounds (evidence and notes). Hunk-keyed tool queues, execution
+# history and outcomes use replacement: their writer returns the complete
+# merged mapping/list to keep one authoritative per-hunk state.
 
 class GraphState(TypedDict, total=False):
     repo: str
     commit_sha: str
     raw_diff: str
     hunks: list
-    # Queue of rules for the CURRENT tool_router round: written by
-    # Planner / Reflection, consumed and cleared by ToolRouter.
-    pending_tools: list
+    # Queue for the CURRENT ToolRouter round, keyed by ``file_path:new_start``.
+    pending_tools_by_hunk: dict
+    executed_tools_by_hunk: dict
+    rule_outcomes: list
     phase: AgentPhase
     evidence_pool: Annotated[list, operator.add]
-    rules_executed: Annotated[list, operator.add]
     risks: list
+    dismissed_evidence: list
     reflection_round: int
     reflection_notes: Annotated[list, operator.add]
     needs_more_analysis: bool

@@ -5,13 +5,10 @@ Reflection pipeline.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
-
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -26,51 +23,56 @@ def _load_diff(name: str) -> str:
     return (FIXTURES_DIR / name).read_text(encoding="utf-8")
 
 
-def _mock_llm(
-    plan, risks, reflection_done=True, extra_reflection=None,
-    extra_tools=None,
-):
-    """Create a mock LLM with pre-set chat responses.
+def _hunk_keys(hunks) -> list[str]:
+    """Build hunk keys matching the convention ``file_path:new_start``."""
+    return [f"{h.file_path}:{h.new_start}" for h in hunks]
+
+
+def _mock_llm(hunks, plan, risks, reflection_done=True,
+              extra_reflection=None, extra_tools=None):
+    """Create a mock LLM with pre-set chat responses for hunk-keyed scheduling.
 
     Args:
-        plan: list of rule names for the planner to return.
+        hunks: parsed hunk list (needed to build hunk-keyed plan).
+        plan: list of rule names for the planner to assign to every hunk.
         risks: list of risk dicts for the judge to return.
         reflection_done: if True, reflection says "no more analysis needed".
         extra_reflection: if provided, first reflection says "need more",
-            then this is used for the second reflection (done).
-        extra_tools: rules suggested by the first reflection. Must NOT
-            overlap with ``plan`` — the anti-idle-loop validation in
-            ReflectionNode finalizes early if the suggestions contain no
-            never-executed rule. Defaults to a rule outside the plan.
+            then a second reflection says "done".
+        extra_tools: rules suggested by the first reflection for all hunks.
+            Must NOT overlap with ``plan`` — anti-idle finalizes early otherwise.
     """
     if extra_tools is None:
         extra_tools = [
             r for r in registry.list_all() if r not in plan
         ][:1]
+    keys = _hunk_keys(hunks)
+    plan_by_hunk = {key: list(plan) for key in keys}
+    tools_by_hunk = {key: list(extra_tools) for key in keys}
+
     llm = MagicMock()
-    responses = [
-        json.dumps({"summary": "test", "plan": plan, "risk_areas": []}),
-        json.dumps({"risks": risks, "overall_risk_score": 0.8}),
+    responses: list[dict] = [
+        {"summary": "test", "plan_by_hunk": plan_by_hunk, "risk_areas": []},
+        {"risks": risks, "overall_risk_score": 0.8},
     ]
     if extra_reflection:
-        responses.append(json.dumps({
+        responses.append({
             "needs_more_analysis": True,
-            "additional_tools_needed": extra_tools,
+            "additional_tools_by_hunk": tools_by_hunk,
             "reason": "Need more", "coverage_assessment": "50%",
-        }))
-        responses.append(json.dumps({
+        })
+        responses.append({
             "needs_more_analysis": False,
-            "additional_tools_needed": [],
+            "additional_tools_by_hunk": {},
             "reason": "Done", "coverage_assessment": "100%",
-        }))
+        })
     else:
-        responses.append(json.dumps({
+        responses.append({
             "needs_more_analysis": False,
-            "additional_tools_needed": [],
+            "additional_tools_by_hunk": {},
             "reason": "Sufficient", "coverage_assessment": "100%",
-        }))
-    llm.chat_json.side_effect = [json.loads(r) for r in responses]
-    # (nodes call chat_json, which returns parsed dicts)
+        })
+    llm.chat_json.side_effect = responses
     return llm
 
 
@@ -103,7 +105,7 @@ class TestE2ESecurityFixture:
             "file_path": "db/queries.py",
             "line_range": [2, 10], "risk_score": 0.95,
         }]
-        llm = _mock_llm(plan, risks)
+        llm = _mock_llm(hunks, plan, risks)
         rag, ltm = _mock_deps()
         graph = build_graph(llm, rag, ltm, registry, max_rounds=3)
         initial = {
@@ -121,7 +123,7 @@ class TestE2ESecurityFixture:
         plan = ["sql_injection", "hardcoded_secret",
                 "command_injection", "unsafe_deserialize"]
         risks = []
-        llm = _mock_llm(plan, risks)
+        llm = _mock_llm(hunks, plan, risks)
         rag, ltm = _mock_deps()
         graph = build_graph(llm, rag, ltm, registry, max_rounds=3)
         initial = {
@@ -142,7 +144,7 @@ class TestE2EMultiFileFixture:
     def test_multi_file_produces_evidence_across_categories(self):
         diff = _load_diff("multi_file_mixed.diff")
         hunks = GitDiffParser().parse(diff)
-        plan = registry.list_all()  # all rules
+        plan = [r for r in registry.list_all() if r != "llm_assisted"]
         risks = [{
             "title": "Mixed Security and Performance Risks",
             "category": "security", "severity": "high",
@@ -151,7 +153,7 @@ class TestE2EMultiFileFixture:
             "suggestion": "Fix all", "file_path": "auth/login.py",
             "line_range": [1, 5], "risk_score": 0.85,
         }]
-        llm = _mock_llm(plan, risks)
+        llm = _mock_llm(hunks, plan, risks)
         rag, ltm = _mock_deps()
         graph = build_graph(llm, rag, ltm, registry, max_rounds=3)
         initial = {
@@ -171,7 +173,7 @@ class TestE2EMultiFileFixture:
         hunks = GitDiffParser().parse(diff)
         plan = ["sql_injection"]
         risks = []
-        llm = _mock_llm(plan, risks)
+        llm = _mock_llm(hunks, plan, risks)
         rag, ltm = _mock_deps()
         graph = build_graph(llm, rag, ltm, registry, max_rounds=3)
         initial = {
@@ -179,7 +181,6 @@ class TestE2EMultiFileFixture:
             "hunks": [h.model_dump() for h in hunks],
         }
         graph.invoke(initial, {"configurable": {"thread_id": "multi-2"}})
-        # RAG add_history should be called at end of analysis
         assert rag.add_history.called or True  # best-effort
 
 
@@ -197,8 +198,7 @@ class TestE2EReflectionLoop:
             "suggestion": "fix", "file_path": "db/queries.py",
             "line_range": [1, 2], "risk_score": 0.8,
         }]
-        # First reflection: needs more; second reflection: done
-        llm = _mock_llm(plan, risks, extra_reflection=True)
+        llm = _mock_llm(hunks, plan, risks, extra_reflection=True)
         rag, ltm = _mock_deps()
         graph = build_graph(llm, rag, ltm, registry, max_rounds=3)
         initial = {
@@ -206,9 +206,7 @@ class TestE2EReflectionLoop:
             "hunks": [h.model_dump() for h in hunks],
         }
         result = graph.invoke(initial, {"configurable": {"thread_id": "refl-1"}})
-        # Should have gone through 2 reflection rounds
         assert result.get("reflection_round", 0) >= 2
-        # Additional evidence from the second tool router pass
         assert len(result.get("evidence_pool", [])) >= 2
 
 
@@ -218,9 +216,9 @@ class TestE2ECleanCodeFixture:
     def test_clean_code_no_evidence(self):
         diff = _load_diff("clean_code.diff")
         hunks = GitDiffParser().parse(diff)
-        plan = registry.list_all()
+        plan = [r for r in registry.list_all() if r != "llm_assisted"]
         risks = []
-        llm = _mock_llm(plan, risks)
+        llm = _mock_llm(hunks, plan, risks)
         rag, ltm = _mock_deps()
         graph = build_graph(llm, rag, ltm, registry, max_rounds=3)
         initial = {
@@ -238,9 +236,9 @@ class TestE2EEdgeCases:
     def test_edge_cases_no_crash(self):
         diff = _load_diff("edge_cases.diff")
         hunks = GitDiffParser().parse(diff)
-        plan = registry.list_all()
+        plan = [r for r in registry.list_all() if r != "llm_assisted"]
         risks = []
-        llm = _mock_llm(plan, risks)
+        llm = _mock_llm(hunks, plan, risks)
         rag, ltm = _mock_deps()
         graph = build_graph(llm, rag, ltm, registry, max_rounds=3)
         initial = {
@@ -248,7 +246,6 @@ class TestE2EEdgeCases:
             "hunks": [h.model_dump() for h in hunks],
         }
         result = graph.invoke(initial, {"configurable": {"thread_id": "edge-1"}})
-        # Should complete without error
         assert result is not None
 
 
@@ -258,21 +255,23 @@ class TestE2EMaxRounds:
     def test_max_rounds_enforced(self):
         diff = _load_diff("security_all.diff")
         hunks = GitDiffParser().parse(diff)
+        keys = _hunk_keys(hunks)
         plan = ["sql_injection"]
         risks = []
         llm = MagicMock()
-        # Planner, Judge, then 3 reflections all saying "need more"
         llm.chat_json.side_effect = [
-            {"summary": "test", "plan": plan, "risk_areas": []},
+            {"summary": "test",
+             "plan_by_hunk": {k: list(plan) for k in keys},
+             "risk_areas": []},
             {"risks": [], "overall_risk_score": 0.0},
             {"needs_more_analysis": True,
-             "additional_tools_needed": ["hardcoded_secret"],
+             "additional_tools_by_hunk": {k: ["hardcoded_secret"] for k in keys},
              "reason": "more", "coverage_assessment": "30%"},
             {"needs_more_analysis": True,
-             "additional_tools_needed": ["command_injection"],
+             "additional_tools_by_hunk": {k: ["command_injection"] for k in keys},
              "reason": "more", "coverage_assessment": "50%"},
             {"needs_more_analysis": True,
-             "additional_tools_needed": ["unsafe_deserialize"],
+             "additional_tools_by_hunk": {k: ["unsafe_deserialize"] for k in keys},
              "reason": "more", "coverage_assessment": "70%"},
         ]
         rag, ltm = _mock_deps()
@@ -282,6 +281,5 @@ class TestE2EMaxRounds:
             "hunks": [h.model_dump() for h in hunks],
         }
         result = graph.invoke(initial, {"configurable": {"thread_id": "max-1"}})
-        # Should stop at round 3 (or 4 depending on counting)
         assert result.get("reflection_round", 0) <= 4
         assert result.get("needs_more_analysis") is False

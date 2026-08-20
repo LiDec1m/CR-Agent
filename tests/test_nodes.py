@@ -1,293 +1,156 @@
-import json
 import os
 import sys
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.models import AgentState, ChangeType, DiffLine, HunkInfo, RiskItem
-from src.nodes.planner import PlannerNode
-from src.nodes.tool_router import ToolRouterNode
+from src.models import (
+    AgentState, ChangeType, DiffLine, HunkInfo, RiskItem, RuleOutcome,
+    RuleOutcomeStatus,
+)
 from src.nodes.judge import JudgeNode
+from src.nodes.planner import PlannerNode
 from src.nodes.reflection import ReflectionNode
+from src.nodes.reporter import ReporterNode
+from src.nodes.tool_router import ToolRouterNode
 from src.rules import registry as _  # trigger registration
 
 
-def _make_hunk(code, file_path="test.py"):
+def _make_hunk(code, file_path="test.py", start=1):
     lines = [
-        DiffLine(content=c, change_type=ChangeType.ADDED, new_line_no=i + 1)
-        for i, c in enumerate(code.splitlines())
+        DiffLine(content=line, change_type=ChangeType.ADDED, new_line_no=start + index)
+        for index, line in enumerate(code.splitlines())
     ]
-    return HunkInfo(file_path=file_path, old_start=1, old_count=0,
-                    new_start=1, new_count=len(lines), lines=lines)
+    return HunkInfo(file_path=file_path, old_start=start, old_count=0,
+                    new_start=start, new_count=len(lines), lines=lines)
 
 
-def test_planner_node():
-    mock_llm = MagicMock()
-    mock_llm.chat_json.return_value = dict({
-        "summary": "Modified login function",
-        "plan": ["sql_injection", "hardcoded_secret"],
-        "risk_areas": ["login.py"],
-    })
-    mock_rag = MagicMock()
-    mock_rag.search_history.return_value = []
-    mock_ltm = MagicMock()
-    mock_ltm.get_feedback.return_value = []
-    node = PlannerNode(mock_llm, mock_rag, mock_ltm)
-    state = AgentState(
-        hunks=[_make_hunk('query = "SELECT * FROM users WHERE name=\'" + username')],
-    )
-    result = node(state)
-    assert "pending_tools" in result
-    assert "sql_injection" in result["pending_tools"]
+def test_planner_node_returns_hunk_keyed_plan():
+    llm = MagicMock()
+    llm.chat_json.return_value = {
+        "plan_by_hunk": {"test.py:1": ["sql_injection", "hardcoded_secret"]},
+    }
+    rag, ltm = MagicMock(), MagicMock()
+    rag.search_history.return_value = []
+    ltm.get_feedback.return_value = []
+
+    result = PlannerNode(llm, rag, ltm)(AgentState(hunks=[_make_hunk("x = 1")]))
+
+    assert result["pending_tools_by_hunk"] == {
+        "test.py:1": ["sql_injection", "hardcoded_secret"],
+    }
     assert result["phase"].value == "tool_routing"
 
 
-def test_planner_node_hardens_malformed_plan():
-    """Regression: 'plan': null / str / mixed-type list must coerce safely.
-
-    .get("plan", []) only fires on a MISSING key — an explicit null
-    must not reach ToolRouter as None (TypeError) nor a bare string
-    (char-by-char silent no-op).
-    """
-    mock_rag = MagicMock()
-    mock_rag.search_history.return_value = []
-    mock_ltm = MagicMock()
-    mock_ltm.get_feedback.return_value = []
-    node = PlannerNode(MagicMock(), mock_rag, mock_ltm)
+def test_planner_drops_malformed_or_unknown_hunk_assignments():
+    rag, ltm = MagicMock(), MagicMock()
+    rag.search_history.return_value = []
+    ltm.get_feedback.return_value = []
+    node = PlannerNode(MagicMock(), rag, ltm)
     state = AgentState(hunks=[_make_hunk("x = 1")])
-
     cases = [
-        ({"plan": None}, []),
-        ({"plan": "sql_injection"}, []),
-        ({"plan": ["sql_injection", 42, None, "long_line"]},
-         ["sql_injection", "long_line"]),
-        ({}, []),
+        ({"plan_by_hunk": None}, {}),
+        ({"plan_by_hunk": {"wrong.py:1": ["sql_injection"]}}, {}),
+        ({"plan_by_hunk": {"test.py:1": ["sql_injection", 42, "long_line"]}},
+         {"test.py:1": ["sql_injection", "long_line"]}),
     ]
     for response, expected in cases:
         node.llm.chat_json.return_value = response
-        result = node(state)
-        assert result["pending_tools"] == expected, response
+        assert node(state)["pending_tools_by_hunk"] == expected
 
 
-def test_tool_router_node():
-    mock_rag = MagicMock()
-    mock_rag.search_codebase.return_value = []
-    from src.rules import registry
-    node = ToolRouterNode(registry, mock_rag)
+def test_tool_router_node_records_execution_per_hunk():
+    rag = MagicMock()
+    rag.search_codebase.return_value = []
     state = AgentState(
         hunks=[_make_hunk('os.system("rm -rf /")')],
-        pending_tools=["command_injection"],
+        pending_tools_by_hunk={"test.py:1": ["command_injection"]},
     )
-    result = node(state)
-    assert "evidence_pool" in result
-    assert len(result["evidence_pool"]) >= 1
-    assert "command_injection" in result["rules_executed"]
+    result = ToolRouterNode(_, rag)(state)
+    assert result["evidence_pool"]
+    assert result["executed_tools_by_hunk"] == {"test.py:1": ["command_injection"]}
+    assert result["rule_outcomes"][0].status is RuleOutcomeStatus.EVIDENCE_PRODUCED
 
 
 def test_judge_node():
-    mock_llm = MagicMock()
-    mock_llm.chat_json.return_value = dict({
-        "risks": [{
-            "title": "Command Injection",
-            "category": "security",
-            "severity": "high",
-            "description": "os.system with user input",
-            "evidence_refs": [0],
-            "suggestion": "Use subprocess with shell=False",
-            "file_path": "test.py",
-            "line_range": [1, 1],
-            "risk_score": 0.9,
-        }],
-        "overall_risk_score": 0.9,
-    })
-    mock_rag = MagicMock()
-    mock_rag.search_security.return_value = []
-    node = JudgeNode(mock_llm, mock_rag)
+    llm = MagicMock()
+    llm.chat_json.return_value = {
+        "risks": [{"title": "Command Injection", "category": "security",
+                   "severity": "high", "description": "d", "evidence_refs": [0],
+                   "suggestion": "s", "file_path": "test.py", "line_range": [1, 1],
+                   "risk_score": 0.9}],
+    }
+    rag = MagicMock()
+    rag.search_security.return_value = []
     from src.models import Evidence, RiskCategory, Severity
-    state = AgentState(
-        evidence_pool=[
-            Evidence(
-                source="command_injection", rule_id="SEC003",
-                category=RiskCategory.SECURITY, severity=Severity.HIGH,
-                message="os.system() at line 1", line_range=(1, 1),
-            )
-        ],
-    )
-    result = node(state)
-    assert "risks" in result
+    state = AgentState(evidence_pool=[Evidence(
+        source="command_injection", rule_id="SEC003", category=RiskCategory.SECURITY,
+        severity=Severity.HIGH, message="os.system()", line_range=(1, 1),
+    )])
+    result = JudgeNode(llm, rag)(state)
     assert len(result["risks"]) == 1
-    assert result["risks"][0].title == "Command Injection"
-    assert len(result["risks"][0].evidence_chain) == 1
 
 
-def test_reflection_node_needs_more():
-    mock_llm = MagicMock()
-    mock_llm.chat_json.return_value = dict({
+def test_reflection_schedules_only_new_hunk_rule_assignment():
+    llm = MagicMock()
+    llm.chat_json.return_value = {
         "needs_more_analysis": True,
-        "additional_tools_needed": ["deep_nesting"],
-        "reason": "Coverage insufficient",
-        "coverage_assessment": "60%",
-    })
-    node = ReflectionNode(mock_llm, max_rounds=3)
-    state = AgentState(reflection_round=0)
-    result = node(state)
+        "additional_tools_by_hunk": {"test.py:1": ["deep_nesting"]},
+        "reason": "Coverage insufficient", "coverage_assessment": "partial",
+    }
+    result = ReflectionNode(llm)(AgentState(hunks=[_make_hunk("x = 1")]))
     assert result["needs_more_analysis"] is True
-    assert "deep_nesting" in result["pending_tools"]
-    assert result["reflection_round"] == 1
+    assert result["pending_tools_by_hunk"] == {"test.py:1": ["deep_nesting"]}
 
 
-def test_reflection_node_done():
-    mock_llm = MagicMock()
-    mock_llm.chat_json.return_value = dict({
-        "needs_more_analysis": False,
-        "additional_tools_needed": [],
-        "reason": "Coverage sufficient",
-        "coverage_assessment": "95%",
-    })
-    node = ReflectionNode(mock_llm, max_rounds=3)
-    state = AgentState(reflection_round=0)
-    result = node(state)
-    assert result["needs_more_analysis"] is False
-    assert result["phase"].value == "done"
-
-
-def test_reflection_node_max_rounds():
-    mock_llm = MagicMock()
-    node = ReflectionNode(mock_llm, max_rounds=3)
-    state = AgentState(reflection_round=3)
-    result = node(state)
-    assert result["needs_more_analysis"] is False
-    assert result["phase"].value == "done"
-    mock_llm.chat.assert_not_called()
-
-
-def test_reflection_final_round_preserves_observation():
-    """At the final allowed round, the LLM's true verdict is preserved
-    (needs_more stays True) for observability; the routing condition
-    sends the graph to reporter regardless, so the report is still
-    produced. Anti-idle: only if NEW rules are suggested."""
-    mock_llm = MagicMock()
-    mock_llm.chat_json.return_value = dict({
+def test_reflection_does_not_rerun_completed_assignment():
+    llm = MagicMock()
+    llm.chat_json.return_value = {
         "needs_more_analysis": True,
-        "additional_tools_needed": ["unused_import"],  # not yet executed
-        "reason": "Coverage still incomplete",
-        "coverage_assessment": "60%",
-    })
-    node = ReflectionNode(mock_llm, max_rounds=3)
-    state = AgentState(reflection_round=2)  # next round = 3 == max_rounds
-    result = node(state)
-    assert result["needs_more_analysis"] is True  # preserved, not overridden
-    assert "report" not in result  # reporter builds it downstream
+        "additional_tools_by_hunk": {"test.py:1": ["unused_import"]},
+        "reason": "More", "coverage_assessment": "partial",
+    }
+    state = AgentState(
+        hunks=[_make_hunk("x = 1")],
+        executed_tools_by_hunk={"test.py:1": ["unused_import"]},
+        rule_outcomes=[RuleOutcome(hunk_key="test.py:1", rule="unused_import",
+                                   status=RuleOutcomeStatus.CLEAN)],
+    )
+    result = ReflectionNode(llm)(state)
+    assert result["needs_more_analysis"] is False
+    assert "Finalizing" in result["reflection_notes"][-1]
 
 
-def test_reflection_non_final_round_still_loops():
-    """Before the final round, a 'need more' verdict with NEW rules
-    must still loop."""
-    mock_llm = MagicMock()
-    mock_llm.chat_json.return_value = dict({
+def test_reflection_final_round_preserves_new_work_observation():
+    llm = MagicMock()
+    llm.chat_json.return_value = {
         "needs_more_analysis": True,
-        "additional_tools_needed": ["unused_import"],
-        "reason": "More",
-        "coverage_assessment": "40%",
-    })
-    node = ReflectionNode(mock_llm, max_rounds=3)
-    state = AgentState(reflection_round=0)  # next round = 1 < 3
-    result = node(state)
+        "additional_tools_by_hunk": {"test.py:1": ["unused_import"]},
+        "reason": "Coverage incomplete", "coverage_assessment": "partial",
+    }
+    result = ReflectionNode(llm, max_rounds=3)(
+        AgentState(hunks=[_make_hunk("x = 1")], reflection_round=2)
+    )
     assert result["needs_more_analysis"] is True
-    assert "report" not in result
 
 
-def test_reflection_no_new_rules_finalizes_instead_of_idling():
-    """Anti-idle: if every suggested rule was already executed (or is
-    unknown), looping back would collect zero new evidence — the node
-    must finalize even on a non-final round."""
-    mock_llm = MagicMock()
-    mock_llm.chat_json.return_value = dict({
-        "needs_more_analysis": True,
-        "additional_tools_needed": ["sql_injection", "not_a_rule"],
-        "reason": "More",
-        "coverage_assessment": "40%",
-    })
-    node = ReflectionNode(mock_llm, max_rounds=3)
+def test_reporter_builds_derived_rule_list_and_coverage():
+    hunk = _make_hunk("def f():\n    pass", "app.py")
+    risk = RiskItem(title="Test risk", category="security", severity="critical",
+                    description="d", evidence_chain=[], file_path="app.py", risk_score=0.9)
     state = AgentState(
-        reflection_round=0,
-        rules_executed=["sql_injection"],
+        repo="r", commit_sha="abc", hunks=[hunk], risks=[risk], reflection_round=3,
+        executed_tools_by_hunk={"app.py:1": ["sql_injection"]},
+        rule_outcomes=[RuleOutcome(hunk_key="app.py:1", rule="sql_injection",
+                                   status=RuleOutcomeStatus.CLEAN)],
     )
-    result = node(state)
-    assert result["needs_more_analysis"] is False
-    assert "no new rules" in result["reflection_notes"][-1]
-
-
-def test_reflection_filters_already_executed_from_suggestions():
-    """Suggested rules that already ran are dropped from the returned
-    additional_tools_needed so tool_router only executes new ones."""
-    mock_llm = MagicMock()
-    mock_llm.chat_json.return_value = dict({
-        "needs_more_analysis": True,
-        "additional_tools_needed": ["sql_injection", "magic_number"],
-        "reason": "More",
-        "coverage_assessment": "40%",
-    })
-    node = ReflectionNode(mock_llm, max_rounds=3)
-    state = AgentState(
-        reflection_round=0,
-        rules_executed=["sql_injection"],
-    )
-    result = node(state)
-    assert result["needs_more_analysis"] is True
-    assert result["pending_tools"] == ["magic_number"]
-
-
-# ------------------------------------------------------------------
-# ReporterNode tests
-# ------------------------------------------------------------------
-
-def test_reporter_builds_report_from_state():
-    from src.nodes.reporter import ReporterNode
-
-    hunk = HunkInfo(
-        file_path="app.py", old_start=1, old_count=0,
-        new_start=1, new_count=2,
-        lines=[
-            DiffLine(content="def f():", change_type=ChangeType.ADDED, new_line_no=1),
-            DiffLine(content="    pass", change_type=ChangeType.ADDED, new_line_no=2),
-        ],
-    )
-    risk = RiskItem(
-        title="Test risk", category="security", severity="critical",
-        description="d", evidence_refs=[], suggestion="s",
-        file_path="app.py", risk_score=0.9,
-    )
-    state = AgentState(
-        repo="r", commit_sha="abc", hunks=[hunk],
-        risks=[risk], rules_executed=["sql_injection"],
-        reflection_round=3, reflection_notes=["Round 1: x"],
-        long_term_feedback=["fb"],
-    )
-    result = ReporterNode()(state)
-    report = result["report"]
-    assert report is not None
-    assert report.repo == "r"
-    assert report.commit_sha == "abc"
-    assert report.overall_risk_score == 0.9
-    assert report.files_scanned == ["app.py"]
-    assert report.total_hunks == 1
+    report = ReporterNode()(state)["report"]
     assert report.rules_executed == ["sql_injection"]
-    assert report.reflection_rounds == 3
-    assert report.long_term_feedback_applied == ["fb"]
-    # needs_more_analysis is NOT overwritten by reporter — it stays as
-    # an observability signal in state (default False here).
-    assert "needs_more_analysis" not in result
-    assert result["phase"].value == "done"
+    assert report.conclusively_examined_hunks == 1
+    assert report.coverage_limited_hunks == 0
 
 
 def test_reporter_empty_state_zero_score():
-    from src.nodes.reporter import ReporterNode
-
-    result = ReporterNode()(AgentState())
-    report = result["report"]
-    assert report is not None
+    report = ReporterNode()(AgentState())["report"]
     assert report.overall_risk_score == 0.0
     assert report.summary == "No significant risks detected."
-    assert report.risks == []

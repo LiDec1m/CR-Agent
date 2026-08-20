@@ -27,6 +27,7 @@ class LLMClient:
         model: str,
         timeout: float = 120.0,
         max_retries: int = 3,
+        max_tokens: int = 49152,
     ) -> None:
         self._client = OpenAI(
             api_key=api_key,
@@ -35,6 +36,7 @@ class LLMClient:
             max_retries=max_retries,
         )
         self._model = model
+        self._max_tokens = max_tokens
 
     def chat(
         self,
@@ -49,7 +51,7 @@ class LLMClient:
         kwargs: dict = {
             "model": self._model,
             "messages": messages,
-            "max_tokens": 8192,
+            "max_tokens": self._max_tokens,
         }
         if response_format is not None:
             kwargs["response_format"] = response_format
@@ -135,7 +137,7 @@ class LLMClient:
         response = self._client.chat.completions.create(
             model=self._model,
             messages=messages,  # type: ignore[arg-type]
-            max_tokens=8192,
+            max_tokens=self._max_tokens,
         )
         return response.choices[0].message.content or ""
 

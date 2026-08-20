@@ -144,6 +144,8 @@ def _render_report(report, console: Console) -> None:
         f"[bold]Commit:[/bold] {report.commit_sha or 'N/A'}\n"
         f"[bold]Files scanned:[/bold] {len(report.files_scanned)}\n"
         f"[bold]Total hunks:[/bold] {report.total_hunks}\n"
+        f"[bold]Conclusive coverage:[/bold] {report.conclusively_examined_hunks}/{report.total_hunks} hunks\n"
+        f"[bold]Coverage-limited hunks:[/bold] {report.coverage_limited_hunks}\n"
         f"[bold]Overall risk score:[/bold] {report.overall_risk_score:.2f}\n"
         f"[bold]Reflection rounds:[/bold] {report.reflection_rounds}\n"
         f"\n{report.summary}"
@@ -205,6 +207,24 @@ def _render_report(report, console: Console) -> None:
                 "\n".join(detail_lines),
                 title=f"Risk #{i}: {risk.title}",
                 border_style="yellow",
+            )
+        )
+
+    # -- Dismissed evidence panel --
+    if report.dismissed_evidence:
+        dismissed_lines = []
+        for d in report.dismissed_evidence:
+            ev = d.evidence
+            dismissed_lines.append(
+                f"  - [{ev.source_type}] {ev.source} "
+                f"({ev.severity.value}, conf={ev.confidence:.2f}): {ev.message}"
+            )
+            dismissed_lines.append(f"    Reason: {d.reason}")
+        console.print(
+            Panel(
+                "\n".join(dismissed_lines),
+                title=f"Dismissed Evidence ({len(report.dismissed_evidence)} item(s))",
+                border_style="blue",
             )
         )
 

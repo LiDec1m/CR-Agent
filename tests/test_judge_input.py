@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.models import AgentPhase, AgentState, Evidence, HunkInfo, RiskCategory, Severity
+from src.models import AgentPhase, AgentState, Evidence, HunkInfo, RiskCategory, RiskItem, Severity
 from src.nodes.judge import JudgeNode, _codebase_is_fallback
 
 
@@ -65,14 +65,16 @@ def test_risk_without_evidence_refs_is_discarded():
 
 
 def test_prompt_contains_evidence_refs_constraint():
-    judge, llm = _judge_with({"risks": [], "overall_risk_score": 0.0})
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
     judge(_state([_evidence(1)], [_hunk()]))
     prompt = llm.chat_json.call_args[0][1]
     assert "MUST reference at least one evidence index" in prompt
+    assert "dismissed_evidence" in prompt
+    assert "VERIFY it against the provided codebase" in prompt
 
 
 def test_security_knowledge_slimmed_in_prompt():
-    judge, llm = _judge_with({"risks": [], "overall_risk_score": 0.0})
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
     judge(_state([_evidence(1)], [_hunk()]))
     prompt = llm.chat_json.call_args[0][1]
     assert "long narrative" not in prompt
@@ -81,7 +83,7 @@ def test_security_knowledge_slimmed_in_prompt():
 
 
 def test_history_slimmed_in_prompt():
-    judge, llm = _judge_with({"risks": [], "overall_risk_score": 0.0})
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
     history = [{
         "file_path": "db/queries.py", "diff_summary": "long summary " * 20,
         "risk_titles": ["SQL injection", "Hardcoded secret"],
@@ -94,14 +96,14 @@ def test_history_slimmed_in_prompt():
 
 
 def test_snippet_kept_when_codebase_missing():
-    judge, llm = _judge_with({"risks": [], "overall_risk_score": 0.0})
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
     judge(_state([_evidence(1)], [_hunk()], codebase={}))
     prompt = llm.chat_json.call_args[0][1]
     assert "SELECT" in prompt  # snippet retained
 
 
 def test_snippet_dropped_when_symbols_selected():
-    judge, llm = _judge_with({"risks": [], "overall_risk_score": 0.0})
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
     codebase = {"db/queries.py": [{
         "file_path": "db/queries.py", "symbol_name": "get_user",
         "symbol_type": "function", "line_range": "1-20",
@@ -126,3 +128,93 @@ def test_codebase_is_fallback_detection():
     assert _codebase_is_fallback([hunk_overlap], codebase, {}) is False
     assert _codebase_is_fallback([hunk_far], codebase, {}) is True
     assert _codebase_is_fallback([hunk_far], {}, {}) is False  # no symbols at all
+
+
+def test_dismissed_evidence_parsed_and_index_validated():
+    ev = [_evidence(1), _evidence(2, "tests/foo.py")]
+    judge, _ = _judge_with({
+        "risks": [
+            {"title": "Real", "evidence_refs": [0], "category": "security",
+             "severity": "high", "description": "d", "suggestion": "s",
+             "file_path": "db/queries.py", "line_range": [1, 1], "risk_score": 0.9},
+        ],
+        "dismissed_evidence": [
+            {"index": 1, "reason": "Test fixture, not production code"},
+            {"index": 99, "reason": "Should be ignored (out of range)"},
+        ],
+        "overall_risk_score": 0.5,
+    })
+    result = judge(_state(ev, [_hunk(), _hunk("tests/foo.py")]))
+    assert len(result["dismissed_evidence"]) == 1
+    assert result["dismissed_evidence"][0].evidence.file_path == "tests/foo.py"
+    assert "Test fixture" in result["dismissed_evidence"][0].reason
+
+
+def test_risk_with_all_refs_dismissed_is_dropped():
+    ev = [_evidence(1), _evidence(2)]
+    judge, _ = _judge_with({
+        "risks": [
+            {"title": "Should survive", "evidence_refs": [0], "category": "security",
+             "severity": "high", "description": "d", "suggestion": "s",
+             "file_path": "db/queries.py", "line_range": [1, 1], "risk_score": 0.9},
+            {"title": "All refs dismissed", "evidence_refs": [1], "category": "security",
+             "severity": "high", "description": "d", "suggestion": "s",
+             "file_path": "db/queries.py", "line_range": [2, 2], "risk_score": 0.8},
+        ],
+        "dismissed_evidence": [
+            {"index": 1, "reason": "False positive"},
+        ],
+        "overall_risk_score": 0.5,
+    })
+    result = judge(_state(ev, [_hunk()]))
+    assert len(result["risks"]) == 1
+    assert result["risks"][0].title == "Should survive"
+    assert len(result["dismissed_evidence"]) == 1
+
+
+def test_risk_with_partial_dismissed_refs_survives():
+    ev = [_evidence(1), _evidence(2)]
+    judge, _ = _judge_with({
+        "risks": [
+            {"title": "Partial", "evidence_refs": [0, 1], "category": "security",
+             "severity": "high", "description": "d", "suggestion": "s",
+             "file_path": "db/queries.py", "line_range": [1, 1], "risk_score": 0.9},
+        ],
+        "dismissed_evidence": [
+            {"index": 1, "reason": "One ref is false positive"},
+        ],
+        "overall_risk_score": 0.5,
+    })
+    result = judge(_state(ev, [_hunk()]))
+    assert len(result["risks"]) == 1
+    # chain only contains the non-dismissed ref
+    assert len(result["risks"][0].evidence_chain) == 1
+
+
+def test_degradation_preserves_previous_risks():
+    """When chat_json returns None (truncated/unparseable), Judge must NOT
+    return risks/dismissed_evidence keys — GraphState replaces by whole
+    value, so returning [] would wipe a previous round's valid adjudication.
+    Omitting the keys leaves state.risks untouched."""
+    prev_risk = RiskItem(
+        title="Prior round risk", category=RiskCategory.SECURITY,
+        severity=Severity.HIGH, description="d",
+        evidence_chain=[_evidence(1)],
+        file_path="db/queries.py", line_range=(1, 1), risk_score=0.8,
+    )
+    ev = [_evidence(1), _evidence(2)]
+    state = _state(ev, [_hunk()])
+    state.risks = [prev_risk]
+    state.dismissed_evidence = []
+
+    llm = MagicMock()
+    llm.chat_json.return_value = None  # truncated / unparseable
+    rag = MagicMock()
+    rag.search_security.return_value = []
+    judge = JudgeNode(llm=llm, rag=rag)
+
+    result = judge(state)
+    # Degradation: must not carry replacement keys that would wipe prior state.
+    assert "risks" not in result
+    assert "dismissed_evidence" not in result
+    assert result["phase"] == AgentPhase.REFLECTING

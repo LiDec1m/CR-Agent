@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -78,15 +79,55 @@ class RiskItem(BaseModel):
     risk_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
+class RuleOutcomeStatus(str, Enum):
+    """Credibility of one rule execution against one diff hunk."""
+
+    EVIDENCE_PRODUCED = "evidence_produced"
+    CLEAN = "clean"
+    DEGRADED = "degraded"
+    FAILED = "failed"
+
+
+class RuleOutcome(BaseModel):
+    """Auditable outcome of running one rule on one hunk.
+
+    Unlike Evidence, this records successful negative checks and execution
+    failures too, so Reflection can distinguish a clean hunk from one that
+    was never conclusively assessed.
+    """
+
+    hunk_key: str
+    rule: str
+    status: RuleOutcomeStatus
+    detail: Optional[str] = None
+
+
+class DismissedEvidence(BaseModel):
+    """An evidence item that the Judge rejected as false-positive or
+    irrelevant, with a human-readable reason.
+
+    Making the dismissal explicit (rather than silently dropping the
+    evidence) keeps the rejection auditable: a reviewer can see *why*
+    the judge dismissed something and flag false-negative if the
+    reasoning is wrong.
+    """
+
+    evidence: Evidence
+    reason: str
+
+
 class RiskReport(BaseModel):
     repo: str = ""
     commit_sha: Optional[str] = None
     summary: str = ""
     risks: list[RiskItem] = Field(default_factory=list)
+    dismissed_evidence: list[DismissedEvidence] = Field(default_factory=list)
     overall_risk_score: float = Field(default=0.0, ge=0.0, le=1.0)
     files_scanned: list[str] = Field(default_factory=list)
     total_hunks: int = 0
     rules_executed: list[str] = Field(default_factory=list)
+    conclusively_examined_hunks: int = 0
+    coverage_limited_hunks: int = 0
     reflection_rounds: int = 0
     long_term_feedback_applied: list[str] = Field(default_factory=list)
 
@@ -97,6 +138,8 @@ class RiskReport(BaseModel):
             f"Commit: {self.commit_sha or 'N/A'}",
             f"Files scanned: {len(self.files_scanned)}",
             f"Total hunks: {self.total_hunks}",
+            f"Conclusive coverage: {self.conclusively_examined_hunks}/{self.total_hunks} hunks",
+            f"Coverage-limited hunks: {self.coverage_limited_hunks}",
             f"Overall risk score: {self.overall_risk_score:.2f}",
             f"Reflection rounds: {self.reflection_rounds}",
             "",
@@ -141,17 +184,21 @@ class AgentState(BaseModel):
     commit_sha: Optional[str] = None
     raw_diff: str = ""
     hunks: list[HunkInfo] = Field(default_factory=list)
-    # Queue of rules to execute in the CURRENT tool_router round.
-    # Written by Planner (first round) and Reflection (each loop),
-    # consumed and cleared by ToolRouter after execution. The audit
-    # trail of what actually ran lives in rules_executed (accumulated).
-    pending_tools: list[str] = Field(default_factory=list)
+    # Queue for the CURRENT ToolRouter round, keyed by ``file_path:new_start``.
+    # Planner and Reflection write it; ToolRouter consumes and clears it.
+    pending_tools_by_hunk: dict[str, list[str]] = Field(default_factory=dict)
+    # Attempted rules keyed by hunk. This is the only execution-history source;
+    # global rule names are derived when needed for RAG feedback/reporting.
+    executed_tools_by_hunk: dict[str, list[str]] = Field(default_factory=dict)
+    # One durable outcome per rule execution, including clean, degraded and
+    # failed checks. Replaced as a whole by ToolRouter to avoid duplicates.
+    rule_outcomes: list[RuleOutcome] = Field(default_factory=list)
     phase: AgentPhase = AgentPhase.PLANNING
     evidence_pool: list[Evidence] = Field(default_factory=list)
-    rules_executed: list[str] = Field(default_factory=list)
     risks: list[RiskItem] = Field(default_factory=list)
     reflection_round: int = 0
     reflection_notes: list[str] = Field(default_factory=list)
+    dismissed_evidence: list[DismissedEvidence] = Field(default_factory=list)
     needs_more_analysis: bool = False
     long_term_feedback: list[str] = Field(default_factory=list)
     rag_context: dict = Field(default_factory=dict)

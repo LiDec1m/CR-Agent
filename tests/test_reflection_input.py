@@ -27,7 +27,10 @@ def _evidence(file_path: str, source_type: str = "deterministic",
 
 def _state(hunks, evidences, risks=None) -> AgentState:
     return AgentState(hunks=hunks, evidence_pool=evidences,
-                      rules_executed=["sql_injection"],
+                      executed_tools_by_hunk={
+                          f"{h.file_path}:{h.new_start}": ["sql_injection"]
+                          for h in hunks
+                      },
                       risks=risks or [])
 
 
@@ -39,7 +42,7 @@ def _node_with(response) -> tuple[ReflectionNode, MagicMock]:
 
 def test_digest_shows_per_hunk_density_and_zero_evidence_gap():
     node, llm = _node_with({
-        "needs_more_analysis": False, "additional_tools_needed": [],
+        "needs_more_analysis": False, "additional_tools_by_hunk": {},
         "reason": "covered", "coverage_assessment": "ok",
     })
     state = _state(
@@ -48,28 +51,31 @@ def test_digest_shows_per_hunk_density_and_zero_evidence_gap():
     )
     node(state)
     prompt = llm.chat_json.call_args[0][1]
-    assert "a.py hunk@5 (+3/-2): 2 evidences, 0 risks" in prompt
-    assert "b.py hunk@5 (+3/-2): 0 evidences, 0 risks" in prompt
-    assert "coverage gaps" in prompt
+    assert "a.py:5 (+3/-2): 2 evidences, 0 risks; checks: unexamined" in prompt
+    assert "b.py:5 (+3/-2): 0 evidences, 0 risks; checks: unexamined" in prompt
+    assert "assessment coverage" in prompt
 
 
-def test_digest_includes_failed_rules():
+def test_digest_includes_failed_rule_outcome():
+    from src.models import RuleOutcome, RuleOutcomeStatus
+
     node, llm = _node_with({
-        "needs_more_analysis": False, "additional_tools_needed": [],
+        "needs_more_analysis": False, "additional_tools_by_hunk": {},
         "reason": "covered", "coverage_assessment": "ok",
     })
-    state = _state(
-        hunks=[_hunk("a.py")],
-        evidences=[_evidence("a.py"), _evidence("a.py", source_type="error", source="n_plus_1_query")],
-    )
+    state = _state(hunks=[_hunk("a.py")], evidences=[_evidence("a.py")])
+    state.rule_outcomes = [
+        RuleOutcome(hunk_key="a.py:5", rule="n_plus_1_query",
+                    status=RuleOutcomeStatus.FAILED, detail="ValueError: broken"),
+    ]
     node(state)
     prompt = llm.chat_json.call_args[0][1]
-    assert "Failed rules (blind spots this round): n_plus_1_query on a.py" in prompt
+    assert "n_plus_1_query=failed" in prompt
 
 
 def test_digest_counts_risks_per_hunk():
     node, llm = _node_with({
-        "needs_more_analysis": False, "additional_tools_needed": [],
+        "needs_more_analysis": False, "additional_tools_by_hunk": {},
         "reason": "covered", "coverage_assessment": "ok",
     })
     risk = RiskItem(title="t", category=RiskCategory.SECURITY,
@@ -85,7 +91,7 @@ def test_digest_counts_risks_per_hunk():
 
 def test_no_digest_without_hunks():
     node, llm = _node_with({
-        "needs_more_analysis": False, "additional_tools_needed": [],
+        "needs_more_analysis": False, "additional_tools_by_hunk": {},
         "reason": "covered", "coverage_assessment": "ok",
     })
     node(AgentState(hunks=[], evidence_pool=[_evidence("a.py")]))
