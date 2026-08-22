@@ -4,12 +4,39 @@ from __future__ import annotations
 
 import ast
 import json
+from typing import Any
 
 from src.llm.client import LLMClient
+from src.memory.long_term import LongTermMemory
 from src.models import (
     AgentPhase, AgentState, DismissedEvidence, RiskCategory, RiskItem, Severity,
 )
 from src.rag.retriever import RAGRetriever
+
+_SEVERITY_VALUES = sorted(s.value for s in Severity)
+
+
+def _validate_judge_response(parsed: Any) -> None:
+    """Business-level contract check run inside the chat_json retry loop.
+
+    Raises ValueError on the first contract violation (e.g. an unknown
+    severity), which chat_json converts into a repair-retry prompt for
+    the LLM instead of silently falling back to a default.
+    """
+    if not isinstance(parsed, dict):
+        raise ValueError("response must be a JSON object")
+    risks = parsed.get("risks", [])
+    if not isinstance(risks, list):
+        raise ValueError("'risks' must be a list")
+    for i, item in enumerate(risks):
+        if not isinstance(item, dict):
+            raise ValueError(f"risks[{i}] must be an object")
+        severity = item.get("severity")
+        if severity not in _SEVERITY_VALUES:
+            raise ValueError(
+                f"risks[{i}].severity must be one of {_SEVERITY_VALUES}; "
+                f"got {severity!r}"
+            )
 
 
 def _parse_symbol_range(lr):
@@ -126,6 +153,42 @@ def _codebase_is_fallback(hunks, codebase: dict, ctx: dict) -> bool:
     return bool(codebase)  # no overlap: fallback only if there was any symbol
 
 
+def _evidence_symbols(codebase: dict, evidence_pool) -> dict[str, list[str]]:
+    """Map evidence file_path -> symbol names the evidence line ranges touch.
+
+    Long-term feedback recall keys on symbols: a feedback row is only
+    relevant to the Judge when the code it corrected is the code the
+    evidence points at. Overlap uses the same interval predicate as
+    _select_codebase_context, restricted to diff-file symbols (evidence
+    never originates in cross-file symbols).
+    """
+    by_file: dict[str, list[str]] = {}
+    for file_path, symbols in codebase.items():
+        ranges = [
+            (sym.get("symbol_name"), _parse_symbol_range(sym.get("line_range")))
+            for sym in symbols
+            if sym.get("source") != "cross_file"
+        ]
+        if not ranges:
+            continue
+        names: list[str] = []
+        for item in evidence_pool:
+            if item.file_path != file_path:
+                continue
+            for name, rng in ranges:
+                if name in names:
+                    continue
+                # No evidence line_range: file-level attribution only.
+                if item.line_range is None:
+                    names.append(name)
+                    continue
+                if rng and rng[0] <= item.line_range[1] and rng[1] >= item.line_range[0]:
+                    names.append(name)
+        if names:
+            by_file[file_path] = names[:20]
+    return by_file
+
+
 class JudgeNode:
     """Convert evidence and RAG context into structured risk items.
 
@@ -135,9 +198,48 @@ class JudgeNode:
     but never invent findings without it.
     """
 
-    def __init__(self, llm: LLMClient, rag: RAGRetriever) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        rag: RAGRetriever,
+        ltm: LongTermMemory | None = None,
+    ) -> None:
         self.llm = llm
         self.rag = rag
+        self.ltm = ltm
+
+    def _recall_feedback_precedents(self, state: AgentState) -> list[dict]:
+        """Recall human feedback tied to the symbols under judgment.
+
+        Per file with evidence: file_pattern is filtered in SQL against
+        the evidence file_path (equality/prefix, 'missing' type excluded),
+        then the evidence-involved symbol names are FTS-matched against
+        feedback_content, bm25-ranked. Deduped across files, capped at 10.
+        Any storage failure degrades to no precedents — never crashes
+        the judgment.
+        """
+        if self.ltm is None:
+            return []
+        try:
+            file_symbols = _evidence_symbols(
+                state.rag_context.get("codebase", {}), state.evidence_pool
+            )
+            seen: set = set()
+            precedents: list[dict] = []
+            for file_path, symbols in file_symbols.items():
+                for row in self.ltm.search_feedback(file_path, symbols, limit=10):
+                    if row.get("id") in seen:
+                        continue
+                    seen.add(row.get("id"))
+                    precedents.append({
+                        "file_pattern": row.get("file_pattern"),
+                        "rule_id": row.get("rule_id"),
+                        "feedback_type": row.get("feedback_type"),
+                        "feedback_content": row.get("feedback_content"),
+                    })
+            return precedents[:10]
+        except Exception:
+            return []
 
     def __call__(self, state: AgentState) -> dict:
         rule_ids = list({item.rule_id for item in state.evidence_pool if item.rule_id})
@@ -176,23 +278,15 @@ class JudgeNode:
                 d["snippet"] = None
             evidence.append(d)
 
-        # History as attribution prior only: file + risk titles, no narrative.
-        history_slim = [
-            {
-                "file_path": h.get("file_path"),
-                "risk_titles": h.get("risk_titles"),
-            }
-            for h in (state.rag_context.get("history") or [])
-        ]
-
         prompt = (
             "Judge these code-risk evidences. Return JSON only: "
             "{\"risks\": [{\"title\": str, \"category\": str, "
-            "\"severity\": str, \"description\": str, \"evidence_refs\": [int], "
+            "\"severity\": one of \"info\", \"low\", \"medium\", "
+            "\"high\", \"critical\", "
+            "\"description\": str, \"evidence_refs\": [int], "
             "\"suggestion\": str, \"file_path\": str, \"line_range\": [int, int], "
             "\"risk_score\": float (0.0-1.0)}], "
-            "\"dismissed_evidence\": [{\"index\": int, \"reason\": str}], "
-            "\"overall_risk_score\": float (0.0-1.0)}.\n"
+            "\"dismissed_evidence\": [{\"index\": int, \"reason\": str}]}.\n"
             "Not all evidence constitutes a real risk. Before confirming any "
             "evidence as a risk, VERIFY it against the provided codebase "
             "context — check whether the flagged pattern is actually present "
@@ -208,14 +302,19 @@ class JudgeNode:
             f"Security knowledge:\n{json.dumps(security)}\n\n"
             f"Codebase context (diff-file symbols overlapping changed lines, plus cross-file symbols actually called from them):\n{json.dumps(codebase_ctx)}"
         )
-        if history_slim:
+        feedback_precedents = self._recall_feedback_precedents(state)
+        if feedback_precedents:
             prompt += (
-                "\n\nHistorical risks previously flagged for these files "
-                f"(use as attribution signal, not as new findings):\n{json.dumps(history_slim)}"
+                "\n\nHuman feedback precedents for these files and symbols "
+                "(past reviewer corrections; a false_positive entry means a "
+                "similar finding was rejected before — do not re-confirm the "
+                "same pattern unless this instance clearly differs, and weigh "
+                f"confirmed entries accordingly):\n{json.dumps(feedback_precedents)}"
             )
         try:
             response = self.llm.chat_json(
-                "You are a code risk judge.", prompt
+                "You are a code risk judge.", prompt,
+                validator=_validate_judge_response,
             )
         except Exception:
             response = None

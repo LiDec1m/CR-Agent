@@ -35,7 +35,7 @@ class GraphState(TypedDict, total=False):
     hunks: list
     # Queue for the CURRENT ToolRouter round, keyed by ``file_path:new_start``.
     pending_tools_by_hunk: dict
-    executed_tools_by_hunk: dict
+    planning_reasons: dict
     rule_outcomes: list
     phase: AgentPhase
     evidence_pool: Annotated[list, operator.add]
@@ -44,7 +44,6 @@ class GraphState(TypedDict, total=False):
     reflection_round: int
     reflection_notes: Annotated[list, operator.add]
     needs_more_analysis: bool
-    long_term_feedback: list
     rag_context: dict
     report: object
 
@@ -76,14 +75,15 @@ def build_graph(
     RiskReport and routes to END). Routing every exit through reporter
     makes a report-less finish structurally impossible.
 
+    ``ltm`` is consumed only by the Judge (false-positive feedback recall).
     ``checkpointer`` enables short-term memory persistence: every node
     transition is checkpointed per ``thread_id``, enabling state replay
     (``graph.get_state_history``) and resumption of interrupted runs.
     """
-    planner = PlannerNode(llm, rag, ltm)
+    planner = PlannerNode(llm, rag)
     tool_router = ToolRouterNode(registry, rag)
-    judge = JudgeNode(llm, rag)
-    reflection = ReflectionNode(llm, ltm=ltm, max_rounds=max_rounds)
+    judge = JudgeNode(llm, rag, ltm=ltm)
+    reflection = ReflectionNode(llm, max_rounds=max_rounds)
     reporter = ReporterNode()
 
     # -- Node wrappers: accept dict, convert to AgentState, return dict --

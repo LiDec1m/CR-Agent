@@ -56,7 +56,6 @@ def test_risk_without_evidence_refs_is_discarded():
              "category": "security", "severity": "high", "description": "d",
              "suggestion": "s", "risk_score": 0.8},
         ],
-        "overall_risk_score": 0.8,
     })
     result = judge(_state(ev, [_hunk()]))
     assert len(result["risks"]) == 1
@@ -65,7 +64,7 @@ def test_risk_without_evidence_refs_is_discarded():
 
 
 def test_prompt_contains_evidence_refs_constraint():
-    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": []})
     judge(_state([_evidence(1)], [_hunk()]))
     prompt = llm.chat_json.call_args[0][1]
     assert "MUST reference at least one evidence index" in prompt
@@ -74,7 +73,7 @@ def test_prompt_contains_evidence_refs_constraint():
 
 
 def test_security_knowledge_slimmed_in_prompt():
-    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": []})
     judge(_state([_evidence(1)], [_hunk()]))
     prompt = llm.chat_json.call_args[0][1]
     assert "long narrative" not in prompt
@@ -82,8 +81,11 @@ def test_security_knowledge_slimmed_in_prompt():
     assert "Use parameterized queries." in prompt
 
 
-def test_history_slimmed_in_prompt():
-    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
+def test_history_not_injected_into_prompt():
+    # Historical risks were removed from the Judge contract: the RAG
+    # history channel is no longer part of the prompt, regardless of what
+    # rag_context carries.
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": []})
     history = [{
         "file_path": "db/queries.py", "diff_summary": "long summary " * 20,
         "risk_titles": ["SQL injection", "Hardcoded secret"],
@@ -91,19 +93,20 @@ def test_history_slimmed_in_prompt():
     }]
     judge(_state([_evidence(1)], [_hunk()], history=history))
     prompt = llm.chat_json.call_args[0][1]
+    assert "Historical risks" not in prompt
     assert "long summary" not in prompt
-    assert "SQL injection" in prompt
+    assert "Hardcoded secret" not in prompt  # history-only risk title
 
 
 def test_snippet_kept_when_codebase_missing():
-    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": []})
     judge(_state([_evidence(1)], [_hunk()], codebase={}))
     prompt = llm.chat_json.call_args[0][1]
     assert "SELECT" in prompt  # snippet retained
 
 
 def test_snippet_dropped_when_symbols_selected():
-    judge, llm = _judge_with({"risks": [], "dismissed_evidence": [], "overall_risk_score": 0.0})
+    judge, llm = _judge_with({"risks": [], "dismissed_evidence": []})
     codebase = {"db/queries.py": [{
         "file_path": "db/queries.py", "symbol_name": "get_user",
         "symbol_type": "function", "line_range": "1-20",
@@ -142,7 +145,6 @@ def test_dismissed_evidence_parsed_and_index_validated():
             {"index": 1, "reason": "Test fixture, not production code"},
             {"index": 99, "reason": "Should be ignored (out of range)"},
         ],
-        "overall_risk_score": 0.5,
     })
     result = judge(_state(ev, [_hunk(), _hunk("tests/foo.py")]))
     assert len(result["dismissed_evidence"]) == 1
@@ -164,7 +166,6 @@ def test_risk_with_all_refs_dismissed_is_dropped():
         "dismissed_evidence": [
             {"index": 1, "reason": "False positive"},
         ],
-        "overall_risk_score": 0.5,
     })
     result = judge(_state(ev, [_hunk()]))
     assert len(result["risks"]) == 1
@@ -183,7 +184,6 @@ def test_risk_with_partial_dismissed_refs_survives():
         "dismissed_evidence": [
             {"index": 1, "reason": "One ref is false positive"},
         ],
-        "overall_risk_score": 0.5,
     })
     result = judge(_state(ev, [_hunk()]))
     assert len(result["risks"]) == 1

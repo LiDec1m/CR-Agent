@@ -126,10 +126,8 @@ class RiskReport(BaseModel):
     files_scanned: list[str] = Field(default_factory=list)
     total_hunks: int = 0
     rules_executed: list[str] = Field(default_factory=list)
-    conclusively_examined_hunks: int = 0
     coverage_limited_hunks: int = 0
     reflection_rounds: int = 0
-    long_term_feedback_applied: list[str] = Field(default_factory=list)
 
     def to_text(self) -> str:
         lines = [
@@ -138,7 +136,7 @@ class RiskReport(BaseModel):
             f"Commit: {self.commit_sha or 'N/A'}",
             f"Files scanned: {len(self.files_scanned)}",
             f"Total hunks: {self.total_hunks}",
-            f"Conclusive coverage: {self.conclusively_examined_hunks}/{self.total_hunks} hunks",
+            f"Conclusive coverage: {self.total_hunks - self.coverage_limited_hunks}/{self.total_hunks} hunks",
             f"Coverage-limited hunks: {self.coverage_limited_hunks}",
             f"Overall risk score: {self.overall_risk_score:.2f}",
             f"Reflection rounds: {self.reflection_rounds}",
@@ -171,11 +169,6 @@ class RiskReport(BaseModel):
                 if r.suggestion:
                     lines.append(f"     Suggestion: {r.suggestion}")
                 lines.append("")
-        if self.long_term_feedback_applied:
-            lines.append(
-                f"Long-term feedback applied: "
-                f"{', '.join(self.long_term_feedback_applied)}"
-            )
         return "\n".join(lines)
 
 
@@ -187,11 +180,14 @@ class AgentState(BaseModel):
     # Queue for the CURRENT ToolRouter round, keyed by ``file_path:new_start``.
     # Planner and Reflection write it; ToolRouter consumes and clears it.
     pending_tools_by_hunk: dict[str, list[str]] = Field(default_factory=dict)
-    # Attempted rules keyed by hunk. This is the only execution-history source;
-    # global rule names are derived when needed for RAG feedback/reporting.
-    executed_tools_by_hunk: dict[str, list[str]] = Field(default_factory=dict)
+    # Why each hunk was scheduled as it was, keyed by ``file_path:new_start``.
+    # Written once by Planner; consumed by Reflection's coverage digest so
+    # the scheduling rationale stays auditable across rounds.
+    planning_reasons: dict[str, str] = Field(default_factory=dict)
     # One durable outcome per rule execution, including clean, degraded and
     # failed checks. Replaced as a whole by ToolRouter to avoid duplicates.
+    # This is the ONLY execution-history source: which rules conclusively
+    # ran where is derived from it (CLEAN / EVIDENCE_PRODUCED entries).
     rule_outcomes: list[RuleOutcome] = Field(default_factory=list)
     phase: AgentPhase = AgentPhase.PLANNING
     evidence_pool: list[Evidence] = Field(default_factory=list)
@@ -200,7 +196,6 @@ class AgentState(BaseModel):
     reflection_notes: list[str] = Field(default_factory=list)
     dismissed_evidence: list[DismissedEvidence] = Field(default_factory=list)
     needs_more_analysis: bool = False
-    long_term_feedback: list[str] = Field(default_factory=list)
     rag_context: dict = Field(default_factory=dict)
     report: Optional[RiskReport] = None
 

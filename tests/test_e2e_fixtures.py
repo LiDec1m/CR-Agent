@@ -47,30 +47,32 @@ def _mock_llm(hunks, plan, risks, reflection_done=True,
             r for r in registry.list_all() if r not in plan
         ][:1]
     keys = _hunk_keys(hunks)
-    plan_by_hunk = {key: list(plan) for key in keys}
+    plan_by_hunk = {
+        key: {"tools": list(plan), "reason": "fixture plan"} for key in keys
+    }
     tools_by_hunk = {key: list(extra_tools) for key in keys}
 
     llm = MagicMock()
     responses: list[dict] = [
-        {"summary": "test", "plan_by_hunk": plan_by_hunk, "risk_areas": []},
-        {"risks": risks, "overall_risk_score": 0.8},
+        {"plan_by_hunk": plan_by_hunk},
+        {"risks": risks, "dismissed_evidence": []},
     ]
     if extra_reflection:
         responses.append({
             "needs_more_analysis": True,
             "additional_tools_by_hunk": tools_by_hunk,
-            "reason": "Need more", "coverage_assessment": "50%",
+            "reason": "Need more",
         })
         responses.append({
             "needs_more_analysis": False,
             "additional_tools_by_hunk": {},
-            "reason": "Done", "coverage_assessment": "100%",
+            "reason": "Done",
         })
     else:
         responses.append({
             "needs_more_analysis": False,
             "additional_tools_by_hunk": {},
-            "reason": "Sufficient", "coverage_assessment": "100%",
+            "reason": "Sufficient",
         })
     llm.chat_json.side_effect = responses
     return llm
@@ -84,7 +86,7 @@ def _mock_deps():
     rag.search_security.return_value = []
     rag.add_history = MagicMock()
     ltm = MagicMock()
-    ltm.get_feedback.return_value = []
+    ltm.search_feedback.return_value = []
     return rag, ltm
 
 
@@ -260,19 +262,17 @@ class TestE2EMaxRounds:
         risks = []
         llm = MagicMock()
         llm.chat_json.side_effect = [
-            {"summary": "test",
-             "plan_by_hunk": {k: list(plan) for k in keys},
-             "risk_areas": []},
-            {"risks": [], "overall_risk_score": 0.0},
+            {"plan_by_hunk": {k: {"tools": list(plan), "reason": "fixture plan"} for k in keys}},
+            {"risks": [], "dismissed_evidence": []},
             {"needs_more_analysis": True,
              "additional_tools_by_hunk": {k: ["hardcoded_secret"] for k in keys},
-             "reason": "more", "coverage_assessment": "30%"},
+             "reason": "more"},
             {"needs_more_analysis": True,
              "additional_tools_by_hunk": {k: ["command_injection"] for k in keys},
-             "reason": "more", "coverage_assessment": "50%"},
+             "reason": "more"},
             {"needs_more_analysis": True,
              "additional_tools_by_hunk": {k: ["unsafe_deserialize"] for k in keys},
-             "reason": "more", "coverage_assessment": "70%"},
+             "reason": "more"},
         ]
         rag, ltm = _mock_deps()
         graph = build_graph(llm, rag, ltm, registry, max_rounds=3)

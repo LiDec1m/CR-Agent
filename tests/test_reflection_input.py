@@ -27,10 +27,6 @@ def _evidence(file_path: str, source_type: str = "deterministic",
 
 def _state(hunks, evidences, risks=None) -> AgentState:
     return AgentState(hunks=hunks, evidence_pool=evidences,
-                      executed_tools_by_hunk={
-                          f"{h.file_path}:{h.new_start}": ["sql_injection"]
-                          for h in hunks
-                      },
                       risks=risks or [])
 
 
@@ -43,7 +39,7 @@ def _node_with(response) -> tuple[ReflectionNode, MagicMock]:
 def test_digest_shows_per_hunk_density_and_zero_evidence_gap():
     node, llm = _node_with({
         "needs_more_analysis": False, "additional_tools_by_hunk": {},
-        "reason": "covered", "coverage_assessment": "ok",
+        "reason": "covered",
     })
     state = _state(
         hunks=[_hunk("a.py"), _hunk("b.py")],
@@ -61,7 +57,7 @@ def test_digest_includes_failed_rule_outcome():
 
     node, llm = _node_with({
         "needs_more_analysis": False, "additional_tools_by_hunk": {},
-        "reason": "covered", "coverage_assessment": "ok",
+        "reason": "covered",
     })
     state = _state(hunks=[_hunk("a.py")], evidences=[_evidence("a.py")])
     state.rule_outcomes = [
@@ -76,7 +72,7 @@ def test_digest_includes_failed_rule_outcome():
 def test_digest_counts_risks_per_hunk():
     node, llm = _node_with({
         "needs_more_analysis": False, "additional_tools_by_hunk": {},
-        "reason": "covered", "coverage_assessment": "ok",
+        "reason": "covered",
     })
     risk = RiskItem(title="t", category=RiskCategory.SECURITY,
                     severity=Severity.HIGH, description="d",
@@ -92,7 +88,7 @@ def test_digest_counts_risks_per_hunk():
 def test_no_digest_without_hunks():
     node, llm = _node_with({
         "needs_more_analysis": False, "additional_tools_by_hunk": {},
-        "reason": "covered", "coverage_assessment": "ok",
+        "reason": "covered",
     })
     node(AgentState(hunks=[], evidence_pool=[_evidence("a.py")]))
     prompt = llm.chat_json.call_args[0][1]

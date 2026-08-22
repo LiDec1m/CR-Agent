@@ -32,16 +32,14 @@ def test_graph_runs_end_to_end():
     key = _hunk_key(SAMPLE_DIFF)
     mock_llm = MagicMock()
     mock_llm.chat_json.side_effect = [
-        {"summary": "test",
-         "plan_by_hunk": {key: ["hardcoded_secret", "unsafe_deserialize", "command_injection"]},
-         "risk_areas": []},
+        {"plan_by_hunk": {key: {"tools": ["hardcoded_secret", "unsafe_deserialize", "command_injection"], "reason": "secrets/eval/os.system in diff"}}},
         {"risks": [{"title": "Security Issues", "category": "security",
                     "severity": "critical", "description": "Multiple",
                     "evidence_refs": [0, 1, 2], "suggestion": "Fix",
                     "file_path": "test.py", "line_range": [2, 4], "risk_score": 0.95}],
-         "overall_risk_score": 0.95},
+         },
         {"needs_more_analysis": False, "additional_tools_by_hunk": {},
-         "reason": "Sufficient", "coverage_assessment": "100%"},
+         "reason": "Sufficient"},
     ]
     mock_rag = MagicMock()
     mock_rag.search_history.return_value = []
@@ -49,7 +47,6 @@ def test_graph_runs_end_to_end():
     mock_rag.search_security.return_value = []
     mock_rag.add_history = MagicMock()
     mock_ltm = MagicMock()
-    mock_ltm.get_feedback.return_value = []
 
     graph = build_graph(mock_llm, mock_rag, mock_ltm, registry, max_rounds=3)
     from src.parsers.diff_parser import GitDiffParser
@@ -78,10 +75,10 @@ def test_graph_checkpointer_persists_state():
     key = f"{hunks[0].file_path}:{hunks[0].new_start}"
     mock_llm = MagicMock()
     mock_llm.chat_json.side_effect = [
-        {"summary": "t", "plan_by_hunk": {key: ["hardcoded_secret"]}, "risk_areas": []},
-        {"risks": [], "overall_risk_score": 0.0},
+        {"plan_by_hunk": {key: {"tools": ["hardcoded_secret"], "reason": "hardcoded credential"}}},
+        {"risks": [], "dismissed_evidence": []},
         {"needs_more_analysis": False, "additional_tools_by_hunk": {},
-         "reason": "ok", "coverage_assessment": "100%"},
+         "reason": "ok"},
     ]
     mock_rag = MagicMock()
     mock_rag.search_history.return_value = []
@@ -89,7 +86,6 @@ def test_graph_checkpointer_persists_state():
     mock_rag.search_security.return_value = []
     mock_rag.add_history = MagicMock()
     mock_ltm = MagicMock()
-    mock_ltm.get_feedback.return_value = []
 
     with tempfile.TemporaryDirectory() as td:
         db = os.path.join(td, "cp.db")
@@ -118,19 +114,19 @@ def test_graph_round_cap_still_produces_report_and_is_observable():
     key = f"{hunks[0].file_path}:{hunks[0].new_start}"
     mock_llm = MagicMock()
     mock_llm.chat_json.side_effect = [
-        {"summary": "t", "plan_by_hunk": {key: ["hardcoded_secret"]}, "risk_areas": []},
-        {"risks": [], "overall_risk_score": 0.0},
+        {"plan_by_hunk": {key: {"tools": ["hardcoded_secret"], "reason": "hardcoded credential"}}},
+        {"risks": [], "dismissed_evidence": []},
         {"needs_more_analysis": True,
          "additional_tools_by_hunk": {key: ["magic_number"]},
-         "reason": "more", "coverage_assessment": "40%"},
-        {"risks": [], "overall_risk_score": 0.0},
+         "reason": "more"},
+        {"risks": [], "dismissed_evidence": []},
         {"needs_more_analysis": True,
          "additional_tools_by_hunk": {key: ["long_line"]},
-         "reason": "more", "coverage_assessment": "60%"},
-        {"risks": [], "overall_risk_score": 0.0},
+         "reason": "more"},
+        {"risks": [], "dismissed_evidence": []},
         {"needs_more_analysis": True,
          "additional_tools_by_hunk": {key: ["naming_violation"]},
-         "reason": "still not enough", "coverage_assessment": "70%"},
+         "reason": "still not enough"},
     ]
     mock_rag = MagicMock()
     mock_rag.search_history.return_value = []
@@ -138,7 +134,6 @@ def test_graph_round_cap_still_produces_report_and_is_observable():
     mock_rag.search_security.return_value = []
     mock_rag.add_history = MagicMock()
     mock_ltm = MagicMock()
-    mock_ltm.get_feedback.return_value = []
 
     graph = build_graph(mock_llm, mock_rag, mock_ltm, registry, max_rounds=3)
     result = graph.invoke(
@@ -163,14 +158,14 @@ def test_graph_reflection_notes_not_duplicated():
     key = f"{hunks[0].file_path}:{hunks[0].new_start}"
     mock_llm = MagicMock()
     mock_llm.chat_json.side_effect = [
-        {"summary": "t", "plan_by_hunk": {key: ["hardcoded_secret"]}, "risk_areas": []},
-        {"risks": [], "overall_risk_score": 0.0},
+        {"plan_by_hunk": {key: {"tools": ["hardcoded_secret"], "reason": "hardcoded credential"}}},
+        {"risks": [], "dismissed_evidence": []},
         {"needs_more_analysis": True,
          "additional_tools_by_hunk": {key: ["magic_number"]},
-         "reason": "more", "coverage_assessment": "40%"},
-        {"risks": [], "overall_risk_score": 0.0},
+         "reason": "more"},
+        {"risks": [], "dismissed_evidence": []},
         {"needs_more_analysis": False, "additional_tools_by_hunk": {},
-         "reason": "done", "coverage_assessment": "95%"},
+         "reason": "done"},
     ]
     mock_rag = MagicMock()
     mock_rag.search_history.return_value = []
@@ -178,8 +173,6 @@ def test_graph_reflection_notes_not_duplicated():
     mock_rag.search_security.return_value = []
     mock_rag.add_history = MagicMock()
     mock_ltm = MagicMock()
-    mock_ltm.get_feedback.return_value = []
-    mock_ltm.get_feedback_by_rule_across_files.return_value = []
 
     graph = build_graph(mock_llm, mock_rag, mock_ltm, registry, max_rounds=3)
     result = graph.invoke(

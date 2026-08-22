@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 from src.llm.client import LLMClient
-from src.memory.long_term import LongTermMemory
 from src.models import AgentPhase, AgentState, RuleOutcomeStatus
 from src.nodes.tool_router import hunk_key
 from src.rules import registry
@@ -15,21 +14,19 @@ class ReflectionNode:
     """Decide whether uncovered hunks need additional rule execution."""
 
     def __init__(
-        self, llm: LLMClient, ltm: LongTermMemory | None = None,
-        max_rounds: int = 3,
+        self, llm: LLMClient, max_rounds: int = 3,
     ) -> None:
         self.llm = llm
-        self.ltm = ltm
         self.max_rounds = max_rounds
 
-    @staticmethod
-    def _executed_rule_names(state: AgentState) -> list[str]:
-        return sorted({
-            rule for rules in state.executed_tools_by_hunk.values() for rule in rules
-        })
-
     def _build_coverage_digest(self, state: AgentState) -> str:
-        """Summarize reliable, degraded and absent hunk-level assessments."""
+        """Summarize reliable, degraded and absent hunk-level assessments.
+
+        Each hunk line also surfaces the Planner's reason for the rules
+        originally chosen there, so the LLM can judge whether a
+        re-analysis target is genuinely uncovered or already covered
+        by design.
+        """
         if not state.hunks:
             return ""
         by_hunk: dict[str, list] = {}
@@ -51,9 +48,12 @@ class ReflectionNode:
                 f"{outcome.rule}={outcome.status.value}"
                 for outcome in outcomes
             ) or "unexamined"
+            reason = state.planning_reasons.get(key, "")
+            planned = f"; planned: {reason}" if reason else ""
             lines.append(
                 f"- {key} (+{hunk.new_count}/-{hunk.old_count}): "
                 f"{n_evidence} evidences, {n_risks} risks; checks: {statuses}"
+                f"{planned}"
             )
         return "Per-hunk assessment coverage:\n" + "\n".join(lines)
 
@@ -61,22 +61,20 @@ class ReflectionNode:
         new_round = state.reflection_round + 1
         if new_round > self.max_rounds:
             return {
-                "needs_more_analysis": False, "phase": AgentPhase.DONE,
+                "needs_more_analysis": False, "phase": AgentPhase.REPORTING,
                 "reflection_round": new_round,
             }
 
-        executed = self._executed_rule_names(state)
         prompt = (
             "Review per-hunk analysis coverage and decide whether targeted rules "
             "are required. Return JSON only: {\"needs_more_analysis\": bool, "
             "\"additional_tools_by_hunk\": {\"file_path:new_start\": [str]}, "
-            "\"reason\": str, \"coverage_assessment\": str}.\n\n"
+            "\"reason\": str}.\n\n"
             "Interpretation: clean and evidence_produced are conclusive completed "
             "checks. degraded means a rule attempted but did not yield a reliable "
             "conclusion and may be retried. failed means the rule is broken and must "
             "not be retried. unexamined means no rule completed for that hunk. "
             "Suggest a rule only for supplied hunk keys.\n\n"
-            f"Executed rule names (derived): {json.dumps(executed)}\n"
             f"Risks: {json.dumps([risk.model_dump(mode='json') for risk in state.risks])}\n"
             f"Available rules: {json.dumps(registry.list_all())}\n\n"
             f"{self._build_coverage_digest(state)}"
@@ -86,10 +84,9 @@ class ReflectionNode:
             needs_more = bool(response.get("needs_more_analysis", False)) if response else False
             raw_suggestions = response.get("additional_tools_by_hunk", {}) if response else {}
             reason = response.get("reason", "") if response else ""
-            assessment = response.get("coverage_assessment", "") if response else ""
         except Exception:
             needs_more, raw_suggestions = False, {}
-            reason, assessment = "Unable to parse reflection response.", "unknown"
+            reason = "Unable to parse reflection response."
 
         pending = self._new_assignments(state, raw_suggestions)
         if needs_more and not pending:
@@ -99,11 +96,11 @@ class ReflectionNode:
                 "failed previously, are unknown, or target unknown hunks. Last "
                 f"assessment: {reason}"
             )
-        note = f"Round {new_round}: {assessment}; {reason}"
+        note = f"Round {new_round}: {reason}"
         return {
             "needs_more_analysis": needs_more,
             "pending_tools_by_hunk": pending if needs_more else {},
-            "phase": AgentPhase.TOOL_ROUTING if needs_more else AgentPhase.DONE,
+            "phase": AgentPhase.TOOL_ROUTING if needs_more else AgentPhase.REPORTING,
             "reflection_round": new_round,
             "reflection_notes": [note],
         }

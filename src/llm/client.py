@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from openai import OpenAI
 
@@ -73,18 +73,25 @@ class LLMClient:
         system_prompt: str,
         user_prompt: str,
         max_parse_retries: int = 2,
+        validator: Callable[[Any], None] | None = None,
     ) -> Any | None:
         """Chat expecting a JSON object response, with repair retries.
 
         Strategy:
         1. Ask the model for JSON; strip markdown fences before parsing.
-        2. On a parse failure, feed the raw output and the parser error
-           back to the model and ask it to fix its own output.
+        2. On a parse failure OR validator rejection, feed the raw output
+           and the error back to the model and ask it to fix its own output.
         3. Repeat up to ``max_parse_retries`` repair attempts.
         4. If all attempts fail, log a warning (system prompt tag + raw
            outputs + errors) and return None. Callers fall back to their
            conservative defaults — the pipeline never crashes on a
            malformed LLM response.
+
+        ``validator`` is an optional business-level check on the parsed
+        dict (e.g. enum field validation). Raising any exception inside it
+        triggers the same repair-retry path as a JSON parse failure, so
+        contract violations are surfaced to the model instead of being
+        silently coerced downstream.
         """
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system_prompt},
@@ -98,8 +105,8 @@ class LLMClient:
             if attempt > 0:
                 # Repair prompt: show what went wrong and ask for a fix.
                 repair = (
-                    "Your previous response could not be parsed as JSON.\n"
-                    f"Parser error: {errors[-1]}\n\n"
+                    "Your previous response could not be accepted.\n"
+                    f"Error: {errors[-1]}\n\n"
                     f"Your previous response:\n{raw_outputs[-1]}\n\n"
                     "Return ONLY a corrected, valid JSON object with no "
                     "markdown fences, no comments, and no extra text. "
@@ -116,7 +123,10 @@ class LLMClient:
             candidate = candidate.lstrip("\ufeff\u200b\u200c\u200d")
 
             try:
-                return json.loads(candidate)
+                parsed = json.loads(candidate)
+                if validator is not None:
+                    validator(parsed)
+                return parsed
             except (json.JSONDecodeError, ValueError) as exc:
                 errors.append(str(exc))
                 logger.debug(

@@ -16,6 +16,31 @@ from typing import Any
 from src.llm.client import LLMClient
 from src.models import Evidence, HunkInfo, RiskCategory, Severity
 
+_SEVERITY_VALUES = sorted(s.value for s in Severity)
+
+
+def _validate_llm_evidences(parsed) -> None:
+    """Contract check run inside the chat_json retry loop.
+
+    Raises ValueError on contract violations (non-list evidences or an
+    unknown severity), so chat_json retries with a repair prompt instead
+    of the caller silently degrading to defaults.
+    """
+    if not isinstance(parsed, dict):
+        raise ValueError("response must be a JSON object")
+    evidences = parsed.get("evidences", [])
+    if not isinstance(evidences, list):
+        raise ValueError("'evidences' must be a list")
+    for i, ev in enumerate(evidences):
+        if not isinstance(ev, dict):
+            raise ValueError(f"evidences[{i}] must be an object")
+        severity = ev.get("severity")
+        if severity not in _SEVERITY_VALUES:
+            raise ValueError(
+                f"evidences[{i}].severity must be one of {_SEVERITY_VALUES}; "
+                f"got {severity!r}"
+            )
+
 
 class LLMAnalysisDegraded(RuntimeError):
     """The LLM rule could not produce a reliable assessment for one hunk."""
@@ -43,7 +68,8 @@ def create_llm_assisted_rule(llm: LLMClient) -> Any:
             "release without re-adding it elsewhere. "
             "Return JSON only: "
             "{\"evidences\": [{\"rule_id\": str, \"category\": str, "
-            "\"severity\": str, \"message\": str, \"line_no\": int}]}\n\n"
+            "\"severity\": one of \"info\", \"low\", \"medium\", "
+            "\"high\", \"critical\", \"message\": str, \"line_no\": int}]}\n\n"
             f"File: {hunk.file_path}\n"
             f"Added code:\n{code or '(none)'}"
         )
@@ -52,7 +78,8 @@ def create_llm_assisted_rule(llm: LLMClient) -> Any:
 
         try:
             response = llm.chat_json(
-                "You are a code risk analyzer.", prompt
+                "You are a code risk analyzer.", prompt,
+                validator=_validate_llm_evidences,
             )
         except Exception as exc:
             raise LLMAnalysisDegraded(
@@ -66,6 +93,9 @@ def create_llm_assisted_rule(llm: LLMClient) -> Any:
 
         results: list[Evidence] = []
         for ev in raw_evidences:
+            # Severity is guaranteed valid by _validate_llm_evidences; the
+            # try/except is a last-resort guard so a contract regression
+            # degrades to a labeled fallback instead of crashing the round.
             try:
                 category = RiskCategory(ev.get("category", "bug_risk"))
             except ValueError:

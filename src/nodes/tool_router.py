@@ -30,10 +30,6 @@ class ToolRouterNode:
     def __call__(self, state: AgentState) -> dict:
         evidence_pool: list[Evidence] = []
         outcomes = list(state.rule_outcomes)
-        executed = {
-            key: list(rules)
-            for key, rules in state.executed_tools_by_hunk.items()
-        }
         codebase = self._get_codebase(state)
         available = set(self.registry.list_all())
         hunk_by_key = {hunk_key(hunk): hunk for hunk in state.hunks}
@@ -102,21 +98,12 @@ class ToolRouterNode:
                     outcomes,
                     RuleOutcome(hunk_key=key, rule=rule_name, status=status),
                 )
-                # Only conclusive results (clean / evidence_produced) are
-                # recorded as "executed". Degraded and failed attempts stay
-                # in rule_outcomes for auditability but do NOT count as
-                # completed — so the anti-idle check in Reflection will
-                # still allow a retry for degraded hunks.
-                executed.setdefault(key, [])
-                if rule_name not in executed[key]:
-                    executed[key].append(rule_name)
 
         rag_context = dict(state.rag_context)
         rag_context["codebase"] = codebase
         return {
             "evidence_pool": evidence_pool,
             "rule_outcomes": outcomes,
-            "executed_tools_by_hunk": executed,
             "pending_tools_by_hunk": {},
             "phase": AgentPhase.JUDGING,
             "rag_context": rag_context,

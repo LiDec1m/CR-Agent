@@ -32,4 +32,5 @@ class AgentPhase(str, Enum):
     TOOL_ROUTING = "tool_routing"
     JUDGING = "judging"
     REFLECTING = "reflecting"
+    REPORTING = "reporting"
     DONE = "done"

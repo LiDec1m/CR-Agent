@@ -44,7 +44,8 @@ def test_router_records_clean_and_evidence_outcomes_per_hunk():
 
     result = _router(registry)(state)
 
-    assert result["executed_tools_by_hunk"] == {"a.py:10": ["clean_rule", "finding_rule"]}
+    # executed_tools_by_hunk was removed; rule_outcomes is the only execution
+    # ledger. clean + evidence_produced outcomes prove both rules ran.
     assert [(o.rule, o.status) for o in result["rule_outcomes"]] == [
         ("clean_rule", RuleOutcomeStatus.CLEAN),
         ("finding_rule", RuleOutcomeStatus.EVIDENCE_PRODUCED),
@@ -69,9 +70,10 @@ def test_router_records_degraded_for_llm_assisted_failure():
     assert outcome.status is RuleOutcomeStatus.DEGRADED
     assert outcome.detail == "response JSON was truncated"
     assert result["evidence_pool"] == []
-    # Degraded rules must NOT appear in executed_tools_by_hunk so that
-    # the anti-idle check allows a retry.
-    assert result["executed_tools_by_hunk"] == {}
+    # Degraded rules stay in rule_outcomes (audit only) but, since
+    # executed_tools_by_hunk was removed, there is no separate executed
+    # list that could block the anti-idle retry — _new_assignments
+    # derives retry eligibility directly from the outcome status.
 
 
 def test_router_records_failed_for_non_llm_rule_error():
@@ -97,14 +99,9 @@ def test_reflection_keeps_targeted_degraded_retry_but_skips_clean_hunk():
             "b.py:20": ["unused_import"],
         },
         "reason": "retry semantic checks",
-        "coverage_assessment": "partial",
     }
     state = AgentState(
         hunks=[_hunk("a.py", 10), _hunk("b.py", 20)],
-        executed_tools_by_hunk={
-            "a.py:10": ["unused_import"],
-            "b.py:20": ["unused_import"],
-        },
         rule_outcomes=[
             RuleOutcome(hunk_key="a.py:10", rule="unused_import",
                         status=RuleOutcomeStatus.DEGRADED, detail="timeout"),
@@ -123,7 +120,7 @@ def test_reflection_digest_distinguishes_clean_degraded_and_unexamined():
     llm = MagicMock()
     llm.chat_json.return_value = {
         "needs_more_analysis": False, "additional_tools_by_hunk": {},
-        "reason": "done", "coverage_assessment": "done",
+        "reason": "done",
     }
     state = AgentState(
         hunks=[_hunk("clean.py", 1), _hunk("degraded.py", 2), _hunk("new.py", 3)],
