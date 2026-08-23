@@ -89,7 +89,8 @@ def test_graph_checkpointer_persists_state():
 
     with tempfile.TemporaryDirectory() as td:
         db = os.path.join(td, "cp.db")
-        with SqliteSaver.from_conn_string(db) as cp:
+        from src.memory.short_term import ShortTermMemory
+        with ShortTermMemory(db).get_checkpointer() as cp:
             graph = build_graph(mock_llm, mock_rag, mock_ltm, registry,
                                 max_rounds=3, checkpointer=cp)
             cfg = {"configurable": {"thread_id": "test-cp"}}
@@ -108,7 +109,7 @@ def test_graph_round_cap_still_produces_report_and_is_observable():
 
     diff = (
         "diff --git a/y.py b/y.py\n@@ -0,0 +1,2 @@\n"
-        "+def f():\n+    password = 'sk-999'\n"
+        "+def f():\n+    password = 'sk-1234567890'\n"
     )
     hunks = GitDiffParser().parse(diff)
     key = f"{hunks[0].file_path}:{hunks[0].new_start}"
@@ -152,7 +153,7 @@ def test_graph_reflection_notes_not_duplicated():
 
     diff = (
         "diff --git a/y.py b/y.py\n@@ -0,0 +1,2 @@\n"
-        "+def f():\n+    password = 'sk-999'\n"
+        "+def f():\n+    password = 'sk-1234567890'\n"
     )
     hunks = GitDiffParser().parse(diff)
     key = f"{hunks[0].file_path}:{hunks[0].new_start}"

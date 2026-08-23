@@ -261,6 +261,9 @@ def test_judge_no_ltm_skips_feedback_recall():
     llm.chat_json.return_value = {"risks": [], "dismissed_evidence": []}
     rag = MagicMock()
     rag.search_security.return_value = []
-    JudgeNode(llm, rag)(AgentState(evidence_pool=[]))
-    prompt = llm.chat_json.call_args[0][1]
-    assert "Human feedback precedents" not in prompt
+    result = JudgeNode(llm, rag)(AgentState(evidence_pool=[]))
+    # Empty pool: no batch to adjudicate, so the judge must not spend an
+    # LLM call at all (previously it judged a prompt with zero evidence).
+    llm.chat_json.assert_not_called()
+    assert result["risks"] == []
+    assert result["judge_unadjudicated_evidence"] == 0

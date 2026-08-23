@@ -5,6 +5,31 @@ from __future__ import annotations
 import sqlite3
 
 
+def normalize_file_pattern(pattern: str) -> str:
+    """Normalize a user-supplied file pattern to equality/prefix semantics.
+
+    search_feedback matches with equality or prefix (no LIKE wildcards:
+    ``_`` in filenames would need escaping and silently mismatches). To
+    keep ingestion and recall symmetric, wildcards are folded at the
+    storage boundary: a trailing ``/*`` or ``/**`` becomes a directory
+    prefix (``src/auth/*`` -> ``src/auth/``), stray ``*`` are stripped
+    (``*.py`` -> ``.py`` is meaningless as a prefix, so an asterisk-only
+    tail collapses to the literal part), and whitespace is trimmed.
+    """
+    pattern = (pattern or "").strip()
+    if not pattern:
+        return ""
+    # Collapse directory-tail wildcards to a directory prefix.
+    for suffix in ("/**", "/*"):
+        if pattern.endswith(suffix):
+            pattern = pattern[: -len(suffix)] + "/"
+            break
+    # A dangling wildcard mid-pattern cannot be expressed as a prefix;
+    # drop it and keep the literal head (best-effort).
+    pattern = pattern.replace("*", "")
+    return pattern
+
+
 class LongTermMemory:
     """CRUD operations for the feedback table."""
 
@@ -39,6 +64,9 @@ class LongTermMemory:
 
     def add_feedback(self, thread_id: str, file_pattern: str, rule_id: str,
                      feedback_type: str, content: str) -> None:
+        # Normalize at the storage boundary so every stored pattern works
+        # under search_feedback's equality/prefix semantics.
+        file_pattern = normalize_file_pattern(file_pattern)
         conn = sqlite3.connect(self._db_path)
         cur = conn.execute(
             "INSERT INTO feedback (thread_id, file_pattern, rule_id, feedback_type, feedback_content) "

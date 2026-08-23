@@ -65,6 +65,10 @@ class Evidence(BaseModel):
     # (rules only see one hunk at a time; Judge needs file attribution
     # to map evidence to the right file in multi-file diffs).
     file_path: Optional[str] = None
+    # Hunk keys this evidence covers. Attached by ToolRouter: identical
+    # enriched code hit by several hunks yields ONE evidence carrying all
+    # of their keys (merge-style dedup) instead of duplicated copies.
+    hunk_keys: list[str] = Field(default_factory=list)
 
 
 class RiskItem(BaseModel):
@@ -116,9 +120,23 @@ class DismissedEvidence(BaseModel):
     reason: str
 
 
+class HunkSummary(BaseModel):
+    """Per-hunk rollup for the final report: what ran, what was found."""
+
+    hunk_key: str
+    # rule name -> outcome status value (e.g. "llm_assisted": "clean")
+    rule_statuses: dict[str, str] = Field(default_factory=dict)
+    evidence_count: int = 0
+    risk_titles: list[str] = Field(default_factory=list)
+
+
 class RiskReport(BaseModel):
     repo: str = ""
     commit_sha: Optional[str] = None
+    # "completed" | "degraded" | "failed". failed = pipeline aborted
+    # (e.g. planner LLM unavailable); degraded = pipeline finished but
+    # some evidence was never adjudicated (judge LLM degraded).
+    status: str = "completed"
     summary: str = ""
     risks: list[RiskItem] = Field(default_factory=list)
     dismissed_evidence: list[DismissedEvidence] = Field(default_factory=list)
@@ -128,12 +146,15 @@ class RiskReport(BaseModel):
     rules_executed: list[str] = Field(default_factory=list)
     coverage_limited_hunks: int = 0
     reflection_rounds: int = 0
+    unadjudicated_evidence: int = 0
+    hunk_summaries: list[HunkSummary] = Field(default_factory=list)
 
     def to_text(self) -> str:
         lines = [
             "=== Code Change Risk Report ===",
             f"Repository: {self.repo}",
             f"Commit: {self.commit_sha or 'N/A'}",
+            f"Status: {self.status}",
             f"Files scanned: {len(self.files_scanned)}",
             f"Total hunks: {self.total_hunks}",
             f"Conclusive coverage: {self.total_hunks - self.coverage_limited_hunks}/{self.total_hunks} hunks",
@@ -144,6 +165,16 @@ class RiskReport(BaseModel):
             f"Summary: {self.summary}",
             "",
         ]
+        if self.status == "failed":
+            lines.append("❌ Analysis aborted — no risks were assessed.")
+            return "\n".join(lines)
+        if self.status == "degraded":
+            lines.append(
+                f"⚠ Judgment incomplete: {self.unadjudicated_evidence} "
+                "evidence item(s) were never adjudicated. Treat absence of "
+                "risks below with caution."
+            )
+            lines.append("")
         if not self.risks:
             lines.append("✅ No significant risks detected.")
         else:
@@ -158,6 +189,11 @@ class RiskReport(BaseModel):
                     if r.line_range:
                         loc += f":{r.line_range[0]}-{r.line_range[1]}"
                     lines.append(f"     Location: {loc}")
+                hunk_keys = sorted({
+                    hk for ev in r.evidence_chain for hk in ev.hunk_keys
+                })
+                if hunk_keys:
+                    lines.append(f"     Hunks: {', '.join(hunk_keys)}")
                 lines.append(f"     Description: {r.description}")
                 lines.append(f"     Evidence chain ({len(r.evidence_chain)} item(s)):")
                 for ev in r.evidence_chain:
@@ -169,6 +205,17 @@ class RiskReport(BaseModel):
                 if r.suggestion:
                     lines.append(f"     Suggestion: {r.suggestion}")
                 lines.append("")
+        if self.hunk_summaries:
+            lines.append("Per-hunk summary:")
+            for hs in self.hunk_summaries:
+                statuses = ", ".join(
+                    f"{rule}={status}" for rule, status in hs.rule_statuses.items()
+                ) or "unexamined"
+                lines.append(
+                    f"  - {hs.hunk_key}: {hs.evidence_count} evidence(s), "
+                    f"{len(hs.risk_titles)} risk(s); checks: {statuses}"
+                    + (f"; risks: {'; '.join(hs.risk_titles)}" if hs.risk_titles else "")
+                )
         return "\n".join(lines)
 
 
@@ -196,6 +243,13 @@ class AgentState(BaseModel):
     reflection_notes: list[str] = Field(default_factory=list)
     dismissed_evidence: list[DismissedEvidence] = Field(default_factory=list)
     needs_more_analysis: bool = False
+    # Fail-fast marker set by a node when the pipeline cannot honestly
+    # continue (e.g. Planner LLM unavailable). graph routes straight to
+    # reporter; Reporter renders a failed report and main.py exits 1.
+    fatal_error: Optional[str] = None
+    # Evidence items the Judge could not adjudicate in its most recent
+    # call (degraded batches). 0 after a fully successful judge call.
+    judge_unadjudicated_evidence: int = 0
     rag_context: dict = Field(default_factory=dict)
     report: Optional[RiskReport] = None
 

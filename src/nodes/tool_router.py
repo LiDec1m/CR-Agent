@@ -20,6 +20,17 @@ def hunk_key(hunk: HunkInfo) -> str:
     return f"{hunk.file_path}:{hunk.new_start}"
 
 
+def _evidence_signature(ev: Evidence) -> tuple:
+    """Semantic identity of an evidence item, independent of hunk coverage.
+
+    Two evidences with the same (source, rule_id, file_path, line_range,
+    message) describe the same finding: identical code hit by several
+    hunks, or a rule re-run in a later reflection round regenerating the
+    same output. Neither case should grow the evidence pool.
+    """
+    return (ev.source, ev.rule_id, ev.file_path, ev.line_range, ev.message)
+
+
 class ToolRouterNode:
     """Run only the rules scheduled for each hunk and audit every result."""
 
@@ -34,12 +45,47 @@ class ToolRouterNode:
         available = set(self.registry.list_all())
         hunk_by_key = {hunk_key(hunk): hunk for hunk in state.hunks}
 
+        # Semantic dedup index over PRIOR rounds' evidence: the pool
+        # accumulates across reflection rounds (graph add-reducer), so a
+        # rule re-run that regenerates an identical item must merge into
+        # the existing evidence instead of appending a duplicate copy.
+        # In-place merge on the prior object is safe here: the live
+        # channel holds these very objects, and the next checkpoint
+        # serializes them after this node completes.
+        prior_by_signature: dict[tuple, Evidence] = {
+            _evidence_signature(ev): ev for ev in state.evidence_pool
+        }
+        # Same-signature index for THIS round's newly produced evidence.
+        round_by_signature: dict[tuple, Evidence] = {}
+
         # Dedup cache: when two hunks fall inside the same indexed symbol,
         # _enrich_hunk produces identical added_code for both. Running the
         # same rule on the same content twice wastes compute and creates
         # duplicate Evidence. Cache by (rule, enriched_code) so the second
         # hunk reuses the first's result.
         exec_cache: dict[tuple[str, str], tuple[list[Evidence], RuleOutcomeStatus]] = {}
+
+        def _attach(ev: Evidence, key: str, file_path: str) -> None:
+            """Attribute one evidence item to a hunk, merging duplicates.
+
+            Merge-style dedup: an identical item (same semantic signature)
+            already in the pool keeps ONE evidence carrying ALL hunk keys
+            it covers. The per-hunk view is rebuilt by Reporter from
+            ``hunk_keys`` — the pool itself never carries copies.
+            """
+            if ev.file_path is None:
+                ev = ev.model_copy(update={"file_path": file_path})
+            signature = _evidence_signature(ev)
+            existing = round_by_signature.get(signature)
+            if existing is None:
+                existing = prior_by_signature.get(signature)
+            if existing is not None:
+                if key not in existing.hunk_keys:
+                    existing.hunk_keys = [*existing.hunk_keys, key]
+                return
+            ev.hunk_keys = [key]
+            round_by_signature[signature] = ev
+            evidence_pool.append(ev)
 
         for key, rule_names in state.pending_tools_by_hunk.items():
             hunk = hunk_by_key.get(key)
@@ -90,10 +136,11 @@ class ToolRouterNode:
                     )
                     exec_cache[cache_key] = (evidences, status)
 
+                # Cache hit or first execution alike: _attach merges the
+                # hunk key into the (possibly already pooled) evidence
+                # instead of appending a per-hunk copy.
                 for ev in evidences:
-                    if ev.file_path is None:
-                        ev = ev.model_copy(update={"file_path": hunk.file_path})
-                    evidence_pool.append(ev)
+                    _attach(ev, key, hunk.file_path)
                 outcomes = self._replace_outcome(
                     outcomes,
                     RuleOutcome(hunk_key=key, rule=rule_name, status=status),

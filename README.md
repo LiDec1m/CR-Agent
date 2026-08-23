@@ -5,7 +5,10 @@
 ## 特性
 
 - **混合确定性+概率性架构**：21 条 AST/正则确定性规则提供可解释证据链，LLM 做高层语义判定
-- **五节点 LangGraph StateGraph**：Planner → Tool Router → Judge → Reflection → Reporter，条件边实现反思回环，Reporter 终点节点保证报告永不缺失
+- **五节点 LangGraph StateGraph**：Planner → Tool Router → Judge → Reflection → Reporter，条件边实现反思回环（及 Planner 失败直达报告的 fail-fast 边），Reporter 终点节点保证报告永不缺失
+- **诚实降级语义**：Planner LLM 不可用 → 立即失败报告（status=failed、退出码 1）；Judge 分批裁决单批降级 → status=degraded 并标注未裁决证据数；合法空计划正常走完全程
+- **证据 hunk 归因去重**：同一证据被多个 hunk 命中时合并为一条携带全部 hunk_keys，报告按 hunk 双呈现（风险行内 Hunks + per-hunk 汇总表）
+- **Judge 分批裁决**：按文件分组、每批 50 条证据、全局 id 引用跨批合并，避免大证据池超出超时窗口导致整体降级
 - **RAG 知识增强**：安全知识库 + 历史风险检索 + 代码库上下文检索（Embedding + FTS5 混合检索 + RRF 融合）
 - **SQLite 双层记忆**：短期 Checkpointer + 长期反馈表
 - **可解释证据链**：每个风险都引用至少一条确定性证据
@@ -26,8 +29,8 @@ python main.py analyze --diff-file path/to/diff.patch
 # 直接传入 diff 文本
 python main.py analyze --diff-text "diff --git ..."
 
-# 添加反馈
-python main.py feedback --thread-id "xxx" --file-pattern "auth/*" --rule-id SEC001 --type false_positive --content "误报"
+# 添加反馈（file-pattern 为文件或目录路径，尾缀 / 表示目录前缀，录入时自动归一化）
+python main.py feedback --thread-id "xxx" --file-pattern "auth/" --rule-id SEC001 --type false_positive --content "误报"
 
 # 索引代码库（可选，用于 RAG 代码上下文检索）
 python main.py index --repo-path /path/to/repo

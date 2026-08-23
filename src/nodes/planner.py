@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from src.llm.client import LLMClient
 from src.models import AgentPhase, AgentState, HunkInfo
 from src.rag.retriever import RAGRetriever
 from src.rules import registry
 from src.nodes.tool_router import hunk_key
+
+logger = logging.getLogger(__name__)
 
 
 class PlannerNode:
@@ -49,11 +52,35 @@ class PlannerNode:
             f"Historical risks:\n{json.dumps(history)}\n\n"
             f"Available deterministic rules:\n{json.dumps(available)}"
         )
+        exc: Exception | None = None
         try:
             response = self.llm.chat_json("You are a code risk planner.", prompt)
-            raw_plan = response.get("plan_by_hunk", {}) if response else {}
-        except Exception:
-            raw_plan = {}
+        except Exception as caught:
+            response = None
+            exc = caught
+
+        # Fail-fast: chat_json returning None means the LLM call degraded
+        # after its internal repair retries — we do NOT know what the model
+        # would have planned. Folding that into an empty plan would disguise
+        # "could not plan" as "nothing worth checking" and the final report
+        # would show a bogus "no risks" verdict (observed in a real run).
+        # A legitimately empty plan (LLM returned JSON with zero valid
+        # assignments) is NOT a failure and continues through the pipeline.
+        if response is None:
+            logger.error(
+                "Planner LLM call degraded after repair retries: %s", exc,
+            )
+            detail = f" ({type(exc).__name__}: {exc})" if exc else ""
+            return {
+                "fatal_error": (
+                    "Planning failed: LLM unavailable after repair retries"
+                    + detail
+                ),
+                "phase": AgentPhase.REPORTING,
+                "rag_context": {"history": history},
+            }
+
+        raw_plan = response.get("plan_by_hunk", {}) if response else {}
 
         valid_keys = {hunk_key(hunk) for hunk in state.hunks}
         pending, reasons = self._normalize_plan(

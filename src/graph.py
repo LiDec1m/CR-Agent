@@ -38,6 +38,8 @@ class GraphState(TypedDict, total=False):
     planning_reasons: dict
     rule_outcomes: list
     phase: AgentPhase
+    fatal_error: str
+    judge_unadjudicated_evidence: int
     evidence_pool: Annotated[list, operator.add]
     risks: list
     dismissed_evidence: list
@@ -116,6 +118,18 @@ def build_graph(
             return "tool_router"
         return "reporter"
 
+    # -- Conditional edge: planner fail-fast. When chat_json degraded
+    # after its repair retries there is nothing to schedule -- routing on
+    # would silently run an empty plan. Route straight to reporter so a
+    # failed report is structurally guaranteed. A legitimately empty plan
+    # (valid JSON, zero assignments) does NOT take this path.
+
+    def planner_route(state: dict) -> str:
+        s = _dict_to_state(state)
+        if s.fatal_error:
+            return "reporter"
+        return "tool_router"
+
     # -- Assemble the workflow --
 
     workflow = StateGraph(GraphState)
@@ -126,7 +140,14 @@ def build_graph(
     workflow.add_node("reporter", reporter_node)
 
     workflow.set_entry_point("planner")
-    workflow.add_edge("planner", "tool_router")
+    workflow.add_conditional_edges(
+        "planner",
+        planner_route,
+        {
+            "tool_router": "tool_router",
+            "reporter": "reporter",
+        },
+    )
     workflow.add_edge("tool_router", "judge")
     workflow.add_edge("judge", "reflection")
     workflow.add_conditional_edges(

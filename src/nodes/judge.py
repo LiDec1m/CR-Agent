@@ -196,7 +196,18 @@ class JudgeNode:
     non-empty, index-valid evidence chain. Risks without valid refs are
     dropped at parse time — the judge may reject or downplay evidence,
     but never invent findings without it.
+
+    Evidence is adjudicated in batches (``_BATCH_SIZE`` per LLM call,
+    grouped by file_path): a prompt covering hundreds of evidence items
+    cannot be answered within the timeout window, which silently degraded
+    every judgment in a real run. Every evidence item keeps its GLOBAL id
+    across batches, so per-batch results merge without re-indexing. A
+    degraded batch is isolated: its evidence is counted as unadjudicated
+    (``judge_unadjudicated_evidence``) while the remaining batches still
+    get judged.
     """
+
+    _BATCH_SIZE = 50
 
     def __init__(
         self,
@@ -271,80 +282,142 @@ class JudgeNode:
         symbols_present = bool(codebase_ctx) and not _codebase_is_fallback(
             state.hunks, state.rag_context.get("codebase", {}), codebase_ctx
         )
-        evidence = []
+        # Global view of the pool: index == global evidence id. Batch
+        # prompts embed each item's id so per-batch refs merge globally.
+        evidence: list[dict] = []
         for idx, item in enumerate(state.evidence_pool):
             d = item.model_dump(mode="json")
+            d["id"] = idx
             if symbols_present:
                 d["snippet"] = None
             evidence.append(d)
 
-        prompt = (
-            "Judge these code-risk evidences. Return JSON only: "
-            "{\"risks\": [{\"title\": str, \"category\": str, "
-            "\"severity\": one of \"info\", \"low\", \"medium\", "
-            "\"high\", \"critical\", "
-            "\"description\": str, \"evidence_refs\": [int], "
-            "\"suggestion\": str, \"file_path\": str, \"line_range\": [int, int], "
-            "\"risk_score\": float (0.0-1.0)}], "
-            "\"dismissed_evidence\": [{\"index\": int, \"reason\": str}]}.\n"
-            "Not all evidence constitutes a real risk. Before confirming any "
-            "evidence as a risk, VERIFY it against the provided codebase "
-            "context — check whether the flagged pattern is actually present "
-            "in the code, whether it is a false positive (e.g. test fixture, "
-            "documentation example, or the symbol is in fact used elsewhere), "
-            "and whether the severity is warranted given the context.\n"
-            "If an evidence item is a false positive or irrelevant, put its "
-            "index in dismissed_evidence with a reason — do NOT create a "
-            "risk for it. Every risk MUST reference at least one evidence "
-            "index in evidence_refs; risks without valid evidence references "
-            "will be discarded.\n\n"
-            f"Evidence (reference by zero-based index; each item carries its own file_path):\n{json.dumps(evidence)}\n\n"
-            f"Security knowledge:\n{json.dumps(security)}\n\n"
-            f"Codebase context (diff-file symbols overlapping changed lines, plus cross-file symbols actually called from them):\n{json.dumps(codebase_ctx)}"
-        )
-        feedback_precedents = self._recall_feedback_precedents(state)
-        if feedback_precedents:
-            prompt += (
-                "\n\nHuman feedback precedents for these files and symbols "
-                "(past reviewer corrections; a false_positive entry means a "
-                "similar finding was rejected before — do not re-confirm the "
-                "same pattern unless this instance clearly differs, and weigh "
-                f"confirmed entries accordingly):\n{json.dumps(feedback_precedents)}"
-            )
-        try:
-            response = self.llm.chat_json(
-                "You are a code risk judge.", prompt,
-                validator=_validate_judge_response,
-            )
-        except Exception:
-            response = None
+        # -- Batch construction: group by file_path, then chunk to
+        # _BATCH_SIZE. File grouping keeps each prompt's codebase context
+        # coherent (one file's symbols verify one file's evidence).
+        by_file: dict[str, list[int]] = {}
+        for idx, item in enumerate(state.evidence_pool):
+            by_file.setdefault(item.file_path or "unknown", []).append(idx)
+        batches: list[list[int]] = []
+        for file_ids in by_file.values():
+            for i in range(0, len(file_ids), self._BATCH_SIZE):
+                batches.append(file_ids[i:i + self._BATCH_SIZE])
 
-        # Degradation path: no parseable judgment (empty, unparseable or
-        # truncated LLM output). Return WITHOUT the ``risks`` /
-        # ``dismissed_evidence`` keys: GraphState uses whole-value
-        # replacement for these fields, so returning empty lists would
-        # erase a previous round's valid adjudication. An unread judgment
-        # must never wipe an earlier one — omitting the keys preserves it.
-        if response is None:
-            rag_context = dict(state.rag_context)
-            rag_context["security"] = security_raw
+        feedback_precedents = self._recall_feedback_precedents(state)
+
+        risks: list[RiskItem] = []
+        dismissed: list[DismissedEvidence] = []
+        unadjudicated = 0
+        for batch_ids in batches:
+            id_set = set(batch_ids)
+            batch_evidence = [evidence[i] for i in batch_ids]
+            prompt = (
+                "Judge these code-risk evidences. Return JSON only: "
+                "{\"risks\": [{\"title\": str, \"category\": str, "
+                "\"severity\": one of \"info\", \"low\", \"medium\", "
+                "\"high\", \"critical\", "
+                "\"description\": str, \"evidence_refs\": [int], "
+                "\"suggestion\": str, \"file_path\": str, \"line_range\": [int, int], "
+                "\"risk_score\": float (0.0-1.0)}], "
+                "\"dismissed_evidence\": [{\"index\": int, \"reason\": str}]}.\n"
+                "Not all evidence constitutes a real risk. Before confirming any "
+                "evidence as a risk, VERIFY it against the provided codebase "
+                "context — check whether the flagged pattern is actually present "
+                "in the code, whether it is a false positive (e.g. test fixture, "
+                "documentation example, or the symbol is in fact used elsewhere), "
+                "and whether the severity is warranted given the context.\n"
+                "If an evidence item is a false positive or irrelevant, put its "
+                "id in dismissed_evidence with a reason — do NOT create a "
+                "risk for it. Every risk MUST reference at least one evidence "
+                "id (the \"id\" field) in evidence_refs, using ONLY ids from "
+                "this batch; risks without valid evidence references "
+                "will be discarded.\n\n"
+                "Evidence for this batch (reference by its \"id\" field; each "
+                "item carries its own file_path):\n"
+                f"{json.dumps(batch_evidence)}\n\n"
+                f"Security knowledge:\n{json.dumps(security)}\n\n"
+                f"Codebase context (diff-file symbols overlapping changed lines, plus cross-file symbols actually called from them):\n{json.dumps(codebase_ctx)}"
+            )
+            if feedback_precedents:
+                prompt += (
+                    "\n\nHuman feedback precedents for these files and symbols "
+                    "(past reviewer corrections; a false_positive entry means a "
+                    "similar finding was rejected before — do not re-confirm the "
+                    "same pattern unless this instance clearly differs, and weigh "
+                    f"confirmed entries accordingly):\n{json.dumps(feedback_precedents)}"
+                )
+            try:
+                response = self.llm.chat_json(
+                    "You are a code risk judge.", prompt,
+                    validator=_validate_judge_response,
+                )
+            except Exception:
+                response = None
+
+            if response is None:
+                # Single-batch degradation isolation: this batch's evidence
+                # stays unadjudicated, but the remaining batches are still
+                # judged. The count is surfaced to Reporter so a degraded
+                # run is reported as "degraded", never as a clean ✅.
+                unadjudicated += len(batch_ids)
+                continue
+
+            batch_risks, batch_dismissed = self._parse_batch(
+                response, state.evidence_pool, id_set
+            )
+            self._merge_batch(risks, batch_risks)
+            dismissed.extend(batch_dismissed)
+
+        rag_context = dict(state.rag_context)
+        rag_context["security"] = security_raw
+
+        # Every batch degraded: nothing was adjudicated this round. Return
+        # WITHOUT the ``risks`` / ``dismissed_evidence`` keys: GraphState
+        # uses whole-value replacement for these fields, so returning
+        # empty lists would erase a previous round's valid adjudication.
+        # An unread judgment must never wipe an earlier one — omitting the
+        # keys preserves it.
+        total = sum(len(b) for b in batches)
+        if batches and unadjudicated == total:
             return {
                 "phase": AgentPhase.REFLECTING,
                 "rag_context": rag_context,
+                "judge_unadjudicated_evidence": unadjudicated,
             }
 
+        return {
+            "risks": risks,
+            "dismissed_evidence": dismissed,
+            "phase": AgentPhase.REFLECTING,
+            "rag_context": rag_context,
+            "judge_unadjudicated_evidence": unadjudicated,
+        }
+
+    @staticmethod
+    def _parse_batch(
+        response: dict,
+        pool: list,
+        id_set: set[int],
+    ) -> tuple[list[RiskItem], list[DismissedEvidence]]:
+        """Parse one batch's judgment against the GLOBAL evidence pool.
+
+        Refs are restricted to ``id_set`` (ids this batch actually saw):
+        any other id would be a hallucinated reference. Dismissal still
+        wins over citation (an id both cited and dismissed supports no
+        risk), and a risk must keep at least one surviving ref.
+        """
         raw_risks = response.get("risks", [])
         raw_dismissed = response.get("dismissed_evidence", [])
 
-        # --- Parse dismissed evidence (index-validated) ---
+        # --- Parse dismissed evidence (id-validated against the batch) ---
         dismissed_idx: set[int] = set()
         dismissed: list[DismissedEvidence] = []
         for d in raw_dismissed:
             idx = d.get("index")
-            if isinstance(idx, int) and 0 <= idx < len(state.evidence_pool):
+            if isinstance(idx, int) and idx in id_set:
                 dismissed_idx.add(idx)
                 dismissed.append(DismissedEvidence(
-                    evidence=state.evidence_pool[idx],
+                    evidence=pool[idx],
                     reason=d.get("reason", "Dismissed by judge"),
                 ))
 
@@ -353,13 +426,13 @@ class JudgeNode:
             refs = item.get("evidence_refs", [])
             valid_refs = [
                 index for index in refs
-                if isinstance(index, int) and 0 <= index < len(state.evidence_pool)
+                if isinstance(index, int) and index in id_set
             ]
             # A risk must retain at least one non-dismissed valid reference.
             # If the LLM both cites and dismisses an index, dismissal wins for
             # that item; only its remaining evidence can support the risk.
             surviving_refs = [index for index in valid_refs if index not in dismissed_idx]
-            chain = [state.evidence_pool[index] for index in surviving_refs]
+            chain = [pool[index] for index in surviving_refs]
             # Zero-hallucination guard: after filtering dismissed / invalid
             # refs, a risk must retain a real evidence chain.
             if not chain:
@@ -391,12 +464,32 @@ class JudgeNode:
                 line_range=line_range,
                 risk_score=raw_score,
             ))
+        return risks, dismissed
 
-        rag_context = dict(state.rag_context)
-        rag_context["security"] = security_raw
-        return {
-            "risks": risks,
-            "dismissed_evidence": dismissed,
-            "phase": AgentPhase.REFLECTING,
-            "rag_context": rag_context,
-        }
+    @staticmethod
+    def _merge_batch(
+        risks: list[RiskItem], batch_risks: list[RiskItem],
+    ) -> None:
+        """Merge one batch's risks into the accumulating global list.
+
+        Global evidence ids mean two batches can independently surface the
+        "same" finding (same title + file_path) with disjoint evidence
+        chains. Merge those into one risk carrying the union of both
+        chains instead of two near-duplicate report entries.
+        """
+        for risk in batch_risks:
+            twin = next(
+                (r for r in risks
+                 if r.title == risk.title and r.file_path == risk.file_path),
+                None,
+            )
+            if twin is None:
+                risks.append(risk)
+                continue
+            known = {id(ev) for ev in twin.evidence_chain}
+            twin.evidence_chain = [
+                *twin.evidence_chain,
+                *(ev for ev in risk.evidence_chain if id(ev) not in known),
+            ]
+            twin.risk_score = max(twin.risk_score, risk.risk_score)
+

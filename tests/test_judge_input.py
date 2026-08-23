@@ -67,7 +67,7 @@ def test_prompt_contains_evidence_refs_constraint():
     judge, llm = _judge_with({"risks": [], "dismissed_evidence": []})
     judge(_state([_evidence(1)], [_hunk()]))
     prompt = llm.chat_json.call_args[0][1]
-    assert "MUST reference at least one evidence index" in prompt
+    assert "MUST reference at least one evidence id" in prompt
     assert "dismissed_evidence" in prompt
     assert "VERIFY it against the provided codebase" in prompt
 

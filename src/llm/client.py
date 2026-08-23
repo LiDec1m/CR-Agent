@@ -18,14 +18,19 @@ _FENCE_RE = re.compile(
 
 
 class LLMClient:
-    """OpenAI-compatible chat completion client."""
+    """OpenAI-compatible chat completion client.
+
+    The default timeout (500s) accommodates long structured responses:
+    a judge batch covering 50 evidence items needs well over 120s to
+    generate, and a client-side abort there silently degrades judgment.
+    """
 
     def __init__(
         self,
         api_key: str,
         api_base: str,
         model: str,
-        timeout: float = 120.0,
+        timeout: float = 500.0,
         max_retries: int = 3,
         max_tokens: int = 49152,
     ) -> None:
@@ -131,6 +136,18 @@ class LLMClient:
                 errors.append(str(exc))
                 logger.debug(
                     "chat_json parse failed (attempt %d/%d) for %r: %s",
+                    attempt + 1, max_parse_retries + 1,
+                    system_prompt[:60], exc,
+                )
+            except Exception as exc:
+                # A validator raising anything other than ValueError has
+                # the same meaning as a contract rejection: surface the
+                # error to the model and retry, instead of letting it
+                # escape and crash the pipeline (the docstring promises
+                # "raising any exception inside it triggers the retry path").
+                errors.append(f"{type(exc).__name__}: {exc}")
+                logger.debug(
+                    "chat_json validator raised (attempt %d/%d) for %r: %s",
                     attempt + 1, max_parse_retries + 1,
                     system_prompt[:60], exc,
                 )

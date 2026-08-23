@@ -139,9 +139,12 @@ def _render_report(report, console: Console) -> None:
         return
 
     # -- Summary panel --
+    status_style = {"completed": "green", "degraded": "yellow", "failed": "red"}
+    status = getattr(report, "status", "completed") or "completed"
     summary_text = (
         f"[bold]Repository:[/bold] {report.repo}\n"
         f"[bold]Commit:[/bold] {report.commit_sha or 'N/A'}\n"
+        f"[bold]Status:[/bold] [{status_style.get(status, 'white')}]{status}[/]\n"
         f"[bold]Files scanned:[/bold] {len(report.files_scanned)}\n"
         f"[bold]Total hunks:[/bold] {report.total_hunks}\n"
         f"[bold]Conclusive coverage:[/bold] {report.total_hunks - report.coverage_limited_hunks}/{report.total_hunks} hunks\n"
@@ -150,7 +153,18 @@ def _render_report(report, console: Console) -> None:
         f"[bold]Reflection rounds:[/bold] {report.reflection_rounds}\n"
         f"\n{report.summary}"
     )
-    console.print(Panel(summary_text, title="Code Change Risk Report", border_style="cyan"))
+    border = status_style.get(status, "cyan")
+    console.print(Panel(summary_text, title="Code Change Risk Report", border_style=border))
+
+    if status == "failed":
+        console.print("[red]❌ Analysis aborted — no risks were assessed.[/red]")
+        return
+    if status == "degraded":
+        console.print(
+            f"[yellow]⚠ Judgment incomplete: {report.unadjudicated_evidence} "
+            "evidence item(s) were never adjudicated. Treat absence of risks "
+            "below with caution.[/yellow]"
+        )
 
     if not report.risks:
         console.print("[green]No significant risks detected.[/green]")
@@ -195,6 +209,11 @@ def _render_report(report, console: Console) -> None:
             f"[bold]Description:[/bold] {risk.description}",
             f"[bold]Evidence chain ({len(risk.evidence_chain)} item(s)):[/bold]",
         ]
+        hunk_keys = sorted({
+            hk for ev in risk.evidence_chain for hk in ev.hunk_keys
+        })
+        if hunk_keys:
+            detail_lines.append(f"[bold]Hunks:[/bold] {', '.join(hunk_keys)}")
         for ev in risk.evidence_chain:
             detail_lines.append(
                 f"  - [{ev.source_type}] {ev.source} "
@@ -227,6 +246,22 @@ def _render_report(report, console: Console) -> None:
                 border_style="blue",
             )
         )
+
+    # -- Per-hunk summary table --
+    if report.hunk_summaries:
+        hunk_table = Table(title="Per-hunk Summary", border_style="cyan")
+        hunk_table.add_column("Hunk", style="dim")
+        hunk_table.add_column("Checks", justify="right")
+        hunk_table.add_column("Evidence", justify="right")
+        hunk_table.add_column("Risks", justify="right")
+        for hs in report.hunk_summaries:
+            hunk_table.add_row(
+                hs.hunk_key,
+                str(len(hs.rule_statuses)),
+                str(hs.evidence_count),
+                str(len(hs.risk_titles)),
+            )
+        console.print(hunk_table)
 
 
 @click.group()
@@ -336,10 +371,18 @@ def analyze(diff_file, diff_text, thread_id, repo, commit):
         )
     _render_report(report, console)
 
+    # Failed analysis = infrastructure/LLM failure, not a clean verdict:
+    # exit non-zero so CI and scripts can distinguish them.
+    if report is not None and getattr(report, "status", "completed") == "failed":
+        sys.exit(1)
+
 
 @cli.command()
 @click.option("--thread-id", required=True, help="Thread ID for this feedback.")
-@click.option("--file-pattern", required=True, help="File pattern (supports * wildcards).")
+@click.option(
+    "--file-pattern", required=True,
+    help="File or directory path (trailing / = directory prefix).",
+)
 @click.option("--rule-id", default=None, help="Related rule ID.")
 @click.option(
     "--type", "feedback_type", required=True,
