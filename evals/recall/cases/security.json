@@ -1,0 +1,126 @@
+[
+  {
+    "id": "sec-golden-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "SQL 拼接证据必须召回 SEC001 知识（类别级判定）",
+    "input": {
+      "query": "Untrusted input concatenated into SQL query string via f-string formatting without parameterization",
+      "rule_ids": ["SEC001"]
+    },
+    "expected_categories": ["SEC001"],
+    "rubric": "任一 rule_id 属于 expected_categories 的结果行存在即 pass"
+  },
+  {
+    "id": "sec-golden-002",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "硬编码密钥证据召回 SEC002",
+    "input": {
+      "query": "Hardcoded API key literal assigned to module-level constant in auth module",
+      "rule_ids": ["SEC002"]
+    },
+    "expected_categories": ["SEC002"],
+    "rubric": "任一 rule_id 属于 expected_categories 的结果行存在即 pass"
+  },
+  {
+    "id": "sec-golden-003",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "子进程命令注入证据召回 SEC003",
+    "input": {
+      "query": "shell command executed with unescaped user-controlled filename argument via subprocess",
+      "rule_ids": ["SEC003"]
+    },
+    "expected_categories": ["SEC003"],
+    "rubric": "任一 rule_id 属于 expected_categories 的结果行存在即 pass"
+  },
+  {
+    "id": "sec-golden-004",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "长查询不再空结果（FTS AND→OR 回归，错题 A：多 token 只有部分重叠）",
+    "input": {
+      "query": "parse_sql query timeout retry backoff hardening service resilience patterns",
+      "rule_ids": null
+    },
+    "expected_categories": [],
+    "expected_nonempty": true,
+    "rubric": "结果非空即 pass（旧 AND 语义下该长查询必然空结果）"
+  },
+  {
+    "id": "sec-golden-005",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "rule_ids 过滤：限定规则集内检索",
+    "input": {
+      "query": "injection prevention best practice parameterized query",
+      "rule_ids": ["SEC001"]
+    },
+    "expected_categories": ["SEC001"],
+    "forbidden_categories": ["SEC002", "SEC003"],
+    "rubric": "命中 expected_categories 且结果中无 forbidden_categories 即 pass"
+  },
+  {
+    "id": "sec-empty-001",
+    "group": "challenge",
+    "layer": "deterministic",
+    "description": "完全不相关主题应返回空（观察项：当前 embedding 通道无相似度阈值，垃圾查询也返回 top-k，记录过召回程度）",
+    "input": {
+      "query": "cookbook recipe pancake ingredients breakfast dessert kitchen",
+      "rule_ids": null
+    },
+    "expected_categories": [],
+    "expected_empty": true,
+    "rubric": "记录返回行数与首行 rule_id；非空属已知限制（embedding 无阈值），不设门禁"
+  },
+  {
+    "id": "sec-late-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "库尾知识行（SEC005 语义弱化删除）仍可召回（存储序截断回归，错题 G）",
+    "input": {
+      "query": "Semantic deletion weakening a validation condition instead of removing the guard check entirely",
+      "rule_ids": ["SEC005"]
+    },
+    "expected_categories": ["SEC005"],
+    "rubric": "命中 SEC005 即 pass（SEC005 知识全部位于表尾 id 33-35）"
+  },
+  {
+    "id": "sec-semantic-001",
+    "group": "challenge",
+    "layer": "semantic",
+    "description": "同义改写：不用 injection/SQL 等关键词描述注入场景仍召回 SEC001",
+    "input": {
+      "query": "Attacker crafts input that alters the meaning of an executed database statement built by string assembly",
+      "rule_ids": null
+    },
+    "expected_categories": ["SEC001"],
+    "rubric": "记录 recall；不作门禁（无关键词命中，纯 embedding 语义层）"
+  },
+  {
+    "id": "sec-semantic-002",
+    "group": "challenge",
+    "layer": "semantic",
+    "description": "中文描述注入场景召回英文安全知识（跨语言语义）",
+    "input": {
+      "query": "用户可控的输入被直接拼接到数据库查询语句中，攻击者可以构造恶意输入修改查询语义",
+      "rule_ids": null
+    },
+    "expected_categories": ["SEC001"],
+    "rubric": "记录 recall；不作门禁"
+  },
+  {
+    "id": "sec-mrr-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "精确关键词命中时目标知识应排名第一",
+    "input": {
+      "query": "SQL injection prevention",
+      "rule_ids": ["SEC001"]
+    },
+    "expected_categories": ["SEC001"],
+    "expect_first_category": true,
+    "rubric": "结果第一行的 rule_id 属于 expected_categories 即 pass"
+  }
+]

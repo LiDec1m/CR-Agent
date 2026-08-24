@@ -1,0 +1,125 @@
+[
+  {
+    "id": "hist-golden-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "同文件历史变更必须被召回（真实 rerun hunk）",
+    "input": {
+      "query": "src/llm/client.py                     \"Your previous response could not be accepted.\\n\"\n                    \"Please return ONLY a valid JSON object.\"",
+      "file_pattern": "src/llm/client.py"
+    },
+    "expected_ids": ["pr-032"],
+    "rubric": "expected_ids 全部出现在结果中即 pass"
+  },
+  {
+    "id": "hist-golden-002",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "FTS 部分重叠仍可命中（OR 语义回归，错题 A）",
+    "input": {
+      "query": "src/llm/client.py parsed = json.loads(candidate) if validator",
+      "file_pattern": "src/llm/client.py"
+    },
+    "expected_ids": ["pr-031"],
+    "rubric": "expected_ids 至少命中一个即 pass（旧 AND 语义长查询必空）"
+  },
+  {
+    "id": "hist-golden-003",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "规则文件历史召回（真实误报修复 hunk）",
+    "input": {
+      "query": "src/rules/llm_assisted.py             # Severity is guaranteed valid by _validate_llm_evidences; the",
+      "file_pattern": "src/rules/llm_assisted.py"
+    },
+    "expected_ids": ["pr-034"],
+    "rubric": "expected_ids 全部出现即 pass"
+  },
+  {
+    "id": "hist-isolation-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "file_pattern 隔离：不同文件的历史不得混入",
+    "input": {
+      "query": "src/nodes/judge.py parsed = json.loads(candidate) if validator",
+      "file_pattern": "src/nodes/judge.py"
+    },
+    "expected_ids": [],
+    "expected_empty": true,
+    "rubric": "结果为空即 pass；任何返回行都是串文件 bad case"
+  },
+  {
+    "id": "hist-empty-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "全新文件无相似历史，应返回空而非硬凑",
+    "input": {
+      "query": "docs/brand_new_module.py def initialize_widget(width, height): return Widget(width, height)",
+      "file_pattern": "docs/brand_new_module.py"
+    },
+    "expected_ids": [],
+    "expected_empty": true,
+    "rubric": "结果为空即 pass"
+  },
+  {
+    "id": "hist-late-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "最相似行写入在 30 行 filler 之后仍可召回（存储序截断回归，错题 G）",
+    "input": {
+      "query": "src/llm/client.py         validator: Callable[[Any], None] | None = None,",
+      "file_pattern": "src/llm/client.py"
+    },
+    "expected_ids": ["pr-033"],
+    "rubric": "expected_ids 出现即 pass（旧行为：LIMIT 窗口只覆盖最早写入的 30 行）"
+  },
+  {
+    "id": "hist-late-002",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "规则文件最晚写入的历史行仍可召回（存储序截断回归第二例）",
+    "input": {
+      "query": "src/rules/llm_assisted.py                 \"You are a code risk analyzer.\", prompt,",
+      "file_pattern": "src/rules/llm_assisted.py"
+    },
+    "expected_ids": ["pr-035"],
+    "rubric": "expected_ids 出现即 pass"
+  },
+  {
+    "id": "hist-semantic-001",
+    "group": "challenge",
+    "layer": "semantic",
+    "description": "变量重命名后的等价代码仍能召回原历史（embedding 语义层）",
+    "input": {
+      "query": "src/llm/client.py                     result = json_module.loads(text)                     if checker is None:",
+      "file_pattern": "src/llm/client.py"
+    },
+    "expected_ids": ["pr-031"],
+    "rubric": "记录 recall；不作门禁（依赖 embedding 模型质量）"
+  },
+  {
+    "id": "hist-semantic-002",
+    "group": "challenge",
+    "layer": "semantic",
+    "description": "逻辑等价改写（循环重试语义）仍召回对应历史",
+    "input": {
+      "query": "src/llm/client.py                     \"The previous reply was invalid JSON.\\n\"                    \"Respond with strict JSON only.\"",
+      "file_pattern": "src/llm/client.py"
+    },
+    "expected_ids": ["pr-032"],
+    "rubric": "记录 recall；不作门禁"
+  },
+  {
+    "id": "hist-mrr-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "精确匹配的历史应排在最前（排序质量）",
+    "input": {
+      "query": "tests/test_rule_outcomes.py         \"reason\": \"done\",",
+      "file_pattern": "tests/test_rule_outcomes.py"
+    },
+    "expected_ids": ["pr-036"],
+    "expect_first": true,
+    "rubric": "expected_ids[0] 是结果第一名即 pass"
+  }
+]

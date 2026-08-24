@@ -1,0 +1,87 @@
+[
+  {
+    "id": "cb-complete-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "路径等值查询必须返回该文件全部符号（完整性，错题 C：LIMIT 5 曾任意丢符号）",
+    "input": {
+      "file_path": "src/nodes/judge.py"
+    },
+    "expected_ids": ["cb-173", "cb-174", "cb-175", "cb-176", "cb-177", "cb-178", "cb-179", "cb-180"],
+    "match_source": "diff_file",
+    "rubric": "source=diff_file 的结果覆盖 expected_ids 全部 8 个符号即 pass"
+  },
+  {
+    "id": "cb-complete-002",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "测试文件符号完整性",
+    "input": {
+      "file_path": "tests/test_rules_security.py"
+    },
+    "expected_ids": "ALL",
+    "expected_file_symbol_count": 17,
+    "match_source": "diff_file",
+    "rubric": "source=diff_file 的结果数等于 expected_file_symbol_count 即 pass"
+  },
+  {
+    "id": "cb-noleak-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "diff_file 来源结果不得混入其他文件符号",
+    "input": {
+      "file_path": "src/nodes/judge.py"
+    },
+    "forbidden_other_files": true,
+    "match_source": "diff_file",
+    "rubric": "source=diff_file 的每行 file_path 都等于输入路径即 pass"
+  },
+  {
+    "id": "cb-unknown-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "未索引路径返回空",
+    "input": {
+      "file_path": "src/nonexistent_module.py"
+    },
+    "expected_ids": [],
+    "expected_empty": true,
+    "rubric": "结果为空即 pass"
+  },
+  {
+    "id": "cb-crossfile-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "import 解析：graph.py 依赖的 src.rag.retriever 符号以 cross_file 召回",
+    "input": {
+      "file_path": "src/graph.py"
+    },
+    "expected_cross_file_paths": ["src/rag/retriever.py"],
+    "rubric": "存在 source=cross_file 且 file_path 属于 expected_cross_file_paths 的结果即 pass"
+  },
+  {
+    "id": "cb-cap-001",
+    "group": "challenge",
+    "layer": "deterministic",
+    "description": "55 符号文件触发上限 50 截断（观察项：记录返回数，不设门禁）",
+    "input": {
+      "file_path": "eval/big_file.py"
+    },
+    "expected_ids": "OBSERVE",
+    "observe_expected": 50,
+    "rubric": "记录 diff_file 来源返回数；=50 属已知限制，非 fail"
+  },
+  {
+    "id": "cb-order-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "结果按 id 升序返回（确定性）",
+    "input": {
+      "file_path": "src/nodes/judge.py"
+    },
+    "expected_ids": ["cb-173", "cb-174", "cb-175", "cb-176", "cb-177", "cb-178", "cb-179", "cb-180"],
+    "expect_exact_order": true,
+    "match_source": "diff_file",
+    "rubric": "diff_file 来源结果的 id 序列严格递增即 pass"
+  }
+]

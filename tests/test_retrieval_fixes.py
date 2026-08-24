@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import sys
+import zlib
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,9 +22,14 @@ class _FakeEmbedding:
     def embed(self, text: str) -> list[float]:
         self.calls.append(text)
         # Simple bag-of-words hashing so similarity is controllable.
-        vec = [0.0] * 16
+        # zlib.crc32 is stable across processes (hash() is randomized per
+        # process via PYTHONHASHSEED, which made ranking assertions flaky).
+        # 512 buckets keep token collisions rare enough that shared-token
+        # rows always outrank disjoint ones (verified: with 64 buckets
+        # 'query' collided with 'added' and flipped an OR-ranking test).
+        vec = [0.0] * 512
         for token in text.lower().split():
-            vec[hash(token) % 16] += 1.0
+            vec[zlib.crc32(token.encode()) % 512] += 1.0
         return vec
 
 
@@ -249,3 +255,92 @@ def test_index_file_full_writes_null_embedding(tmp_path):
     ]
     conn.close()
     assert all(e is None for e in embeddings)
+
+
+# ---------------------------------------------------------------------------
+# G: embedding search scores ALL rows before the top-k cut
+# (regression: SQL "LIMIT" without ORDER BY restricted the candidate pool
+#  to the earliest-inserted rows, silently dropping later-inserted ones)
+# ---------------------------------------------------------------------------
+
+def _last_id(rag: RAGRetriever, table: str) -> int:
+    conn = sqlite3.connect(rag._db_path)
+    try:
+        return conn.execute(f"SELECT MAX(id) FROM {table}").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_embedding_past_risks_reaches_late_inserted_row(tmp_path):
+    """The most similar history row is inserted LAST and beyond the old
+    LIMIT window; it must still be recalled and rank first."""
+    rag, client = _make_retriever(tmp_path)
+    # 40 filler rows with tokens disjoint from the query.
+    for i in range(40):
+        rag.add_history(
+            "t", "a.py", f"filler{i} noise{i}", [f"title{i}"], ["style"], 0.1,
+        )
+    rag.add_history(
+        "t", "a.py", "parse_sql query timeout", ["SQL timeout"], ["security"], 0.9,
+    )
+    target = _last_id(rag, "past_risks")
+
+    query_emb = client.embed("parse_sql query timeout retry")
+    ids = rag._embedding_search_past_risks(query_emb, None, 10)
+
+    assert ids[0] == target  # ranked first, not dropped by insertion order
+    assert len(ids) == 10    # final cut still applies
+
+
+def test_embedding_security_reaches_late_inserted_row(tmp_path):
+    """Same regression on the security_knowledge channel: the best-matching
+    knowledge row is the last one inserted."""
+    rag, client = _make_retriever(tmp_path)
+    conn = sqlite3.connect(rag._db_path)
+    try:
+        for i in range(40):
+            emb = json.dumps(client.embed(f"filler{i} noise{i}"))
+            conn.execute(
+                "INSERT INTO security_knowledge (title, category, rule_id,"
+                " content, best_practice, embedding, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (f"filler{i}", "cat", f"R{i}", "content", "", emb, "2026-01-01"),
+            )
+        target = conn.execute(
+            "INSERT INTO security_knowledge (title, category, rule_id,"
+            " content, best_practice, embedding, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("sql injection", "injection", "SEC001", "content",
+             "", json.dumps(client.embed("parse_sql query timeout")), "2026-01-01"),
+        ).lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+
+    query_emb = client.embed("parse_sql query timeout")
+    ids = rag._embedding_search_security(query_emb, None, 5)
+
+    assert ids[0] == target
+    assert len(ids) == 5
+
+
+def test_embedding_past_risks_respects_file_pattern(tmp_path):
+    """Filter still applies with the full-scan ranking."""
+    rag, client = _make_retriever(tmp_path)
+    rag.add_history("t", "a.py", "parse_sql query timeout", ["x"], ["sec"], 0.5)
+    rag.add_history("t", "b.py", "parse_sql query timeout", ["x"], ["sec"], 0.5)
+    a = _last_id_before(rag, "b.py")
+
+    query_emb = client.embed("parse_sql query timeout")
+    ids = rag._embedding_search_past_risks(query_emb, "a.py", 10)
+    assert ids == [a]
+
+
+def _last_id_before(rag: RAGRetriever, file_path: str) -> int:
+    conn = sqlite3.connect(rag._db_path)
+    try:
+        return conn.execute(
+            "SELECT MAX(id) FROM past_risks WHERE file_path != ?", (file_path,)
+        ).fetchone()[0]
+    finally:
+        conn.close()

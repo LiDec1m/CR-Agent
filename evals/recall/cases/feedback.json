@@ -1,0 +1,103 @@
+[
+  {
+    "id": "fb-golden-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "文件级 pattern + 符号命中：chat_json 的误报反馈必须召回（真实误报种子）",
+    "input": {
+      "file_path": "src/llm/client.py",
+      "symbols": ["chat_json"]
+    },
+    "expected_ids": ["fb-002", "fb-004"],
+    "rubric": "expected_ids 中至少一个被召回即 pass"
+  },
+  {
+    "id": "fb-golden-002",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "规则文件符号反馈召回（真实误报种子）",
+    "input": {
+      "file_path": "src/rules/llm_assisted.py",
+      "symbols": ["_validate_llm_evidences"]
+    },
+    "expected_ids": ["fb-003"],
+    "rubric": "expected_ids 中至少一个被召回即 pass"
+  },
+  {
+    "id": "fb-prefix-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "目录前缀 pattern：src/rules/ 下的目录级反馈对目录内文件生效",
+    "input": {
+      "file_path": "src/rules/llm_assisted.py",
+      "symbols": ["_validate_llm_evidences"]
+    },
+    "expected_ids": ["fb-003", "fb-005"],
+    "rubric": "文件级（fb-003）与目录前缀（fb-005）反馈都被召回即 pass"
+  },
+  {
+    "id": "fb-prefix-002",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "目录前缀 pattern：src/auth/ 反馈对目录内任意文件生效",
+    "input": {
+      "file_path": "src/auth/login.py",
+      "symbols": ["login_retry"]
+    },
+    "expected_ids": ["fb-007"],
+    "rubric": "expected_ids 中至少一个被召回即 pass"
+  },
+  {
+    "id": "fb-type-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "missing 类型反馈不得被召回（查询期类型排除）",
+    "input": {
+      "file_path": "src/llm/client.py",
+      "symbols": ["chat_json", "attempt"]
+    },
+    "expected_ids": ["fb-002", "fb-004"],
+    "forbidden_ids": ["fb-006"],
+    "rubric": "命中 expected_ids 中至少一个且 fb-006 未被召回即 pass"
+  },
+  {
+    "id": "fb-noleak-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "符号不相关时不得召回（过召回防护）",
+    "input": {
+      "file_path": "src/llm/client.py",
+      "symbols": ["totally_unrelated_symbol_xyz"]
+    },
+    "expected_ids": [],
+    "expected_empty": true,
+    "rubric": "结果为空即 pass"
+  },
+  {
+    "id": "fb-noleak-002",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "文件不匹配时不得召回（跨文件隔离：planner.py 的反馈不串入 client.py 查询）",
+    "input": {
+      "file_path": "src/llm/client.py",
+      "symbols": ["normalize_plan", "planner"]
+    },
+    "expected_ids": [],
+    "expected_empty": true,
+    "forbidden_ids": ["fb-001"],
+    "rubric": "结果为空即 pass；fb-001（planner.py 反馈）出现即 fail"
+  },
+  {
+    "id": "fb-unindexed-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "无任何反馈的路径返回空",
+    "input": {
+      "file_path": "docs/unknown_dir/whatever.py",
+      "symbols": ["anything"]
+    },
+    "expected_ids": [],
+    "expected_empty": true,
+    "rubric": "结果为空即 pass"
+  }
+]

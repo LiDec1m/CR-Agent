@@ -35,6 +35,12 @@ python main.py feedback --thread-id "xxx" --file-pattern "auth/" --rule-id SEC00
 
 # 索引代码库（可选，用于 RAG 代码上下文检索）
 python main.py index --repo-path /path/to/repo
+
+# 召回通道评测（确定性层离线跑，golden+regression 失败退出码 1）
+python evals/recall/run_eval.py
+
+# 追加 embedding 语义层（真实模型，记录 recall/MRR 不做门禁）
+python evals/recall/run_eval.py --live --verbose
 ```
 
 ## 架构

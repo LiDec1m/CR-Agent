@@ -415,7 +415,15 @@ class RAGRetriever:
         file_pattern: str | None,
         limit: int,
     ) -> list[int]:
-        """Return row IDs of past_risks ranked by cosine similarity."""
+        """Return row IDs of past_risks ranked by cosine similarity.
+
+        Scores ALL matching rows before truncating: SQLite applies LIMIT
+        in storage order when no ORDER BY is present, which silently
+        restricted the candidate pool to the earliest-inserted rows and
+        made later-inserted histories unreachable regardless of
+        similarity. The SQL limit here is now just a final top-k cut
+        after ranking.
+        """
         conn = sqlite3.connect(self._db_path)
         try:
             sql = "SELECT id, file_path, embedding FROM past_risks"
@@ -423,8 +431,6 @@ class RAGRetriever:
             if file_pattern:
                 sql += " WHERE file_path LIKE ?"
                 params.append(file_pattern.replace("*", "%"))
-            sql += " LIMIT ?"
-            params.append(limit)
 
             rows = conn.execute(sql, params).fetchall()
 
@@ -438,7 +444,7 @@ class RAGRetriever:
                 scored.append((sim, row_id))
 
             scored.sort(key=lambda x: x[0], reverse=True)
-            return [row_id for _, row_id in scored]
+            return [row_id for _, row_id in scored][:limit]
         finally:
             conn.close()
 
@@ -448,19 +454,24 @@ class RAGRetriever:
         rule_ids: list[str] | None,
         limit: int,
     ) -> list[int]:
-        """Return row IDs of security_knowledge ranked by cosine similarity."""
+        """Return row IDs of security_knowledge ranked by cosine similarity.
+
+        Same fix as _embedding_search_past_risks: score every matching row
+        before applying the top-k cut, so later-inserted knowledge is
+        reachable (see that method's docstring for the truncation bug).
+        """
         conn = sqlite3.connect(self._db_path)
         try:
             if rule_ids:
                 placeholders = ",".join("?" * len(rule_ids))
                 sql = (
                     f"SELECT id, embedding FROM security_knowledge "
-                    f"WHERE rule_id IN ({placeholders}) LIMIT ?"
+                    f"WHERE rule_id IN ({placeholders})"
                 )
-                params: list[Any] = list(rule_ids) + [limit]
+                params: list[Any] = list(rule_ids)
             else:
-                sql = "SELECT id, embedding FROM security_knowledge LIMIT ?"
-                params = [limit]
+                sql = "SELECT id, embedding FROM security_knowledge"
+                params = []
 
             rows = conn.execute(sql, params).fetchall()
 
@@ -474,7 +485,7 @@ class RAGRetriever:
                 scored.append((sim, row_id))
 
             scored.sort(key=lambda x: x[0], reverse=True)
-            return [row_id for _, row_id in scored]
+            return [row_id for _, row_id in scored][:limit]
         finally:
             conn.close()
 
