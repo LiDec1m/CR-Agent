@@ -159,6 +159,40 @@ def test_identical_evidence_across_hunks_merges_hunk_keys():
     # ONE evidence in this round's return, carrying both hunk keys.
     assert len(result["evidence_pool"]) == 1
     assert set(result["evidence_pool"][0].hunk_keys) == {"a.py:1", "a.py:10"}
+    # Same-file identical enriched code: cache reused, rule ran once.
+    assert registry.execute.call_count == 1
+
+
+def test_cross_file_identical_code_does_not_share_cache():
+    """Two files with identical enriched code must not share exec_cache
+    results: rule behavior can be path-dependent, and a cross-file
+    collision would attribute one file's evidence/outcome to the other
+    (risk #58 from the 5ec6a23 contract-fix rerun)."""
+    from src.nodes.tool_router import ToolRouterNode
+
+    registry = MagicMock()
+    # Each execution returns a distinct evidence; return_value is shared
+    # mutable state, so use side_effect to hand out fresh copies.
+    ev = _evidence(1)
+    registry.execute.side_effect = [
+        [ev.model_copy(update={"file_path": "a.py"})],
+        [ev.model_copy(update={"file_path": "b.py"})],
+    ]
+    registry.list_all.return_value = ["rule_a"]
+
+    node = ToolRouterNode(registry, _mock_rag())
+    state = AgentState(
+        hunks=[_hunk("a.py", new_start=1), _hunk("b.py", new_start=1)],
+        pending_tools_by_hunk={"a.py:1": ["rule_a"], "b.py:1": ["rule_a"]},
+    )
+    result = node(state)
+    # No cross-file cache hit: the rule executed once per file.
+    assert registry.execute.call_count == 2
+    # Two evidences, each attributed to its own file's hunk only.
+    assert len(result["evidence_pool"]) == 2
+    by_file = {e.file_path: e for e in result["evidence_pool"]}
+    assert by_file["a.py"].hunk_keys == ["a.py:1"]
+    assert by_file["b.py"].hunk_keys == ["b.py:1"]
 
 
 def test_prior_round_duplicate_evidence_merges_not_appends():

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any, Iterator
+from typing import Any
 
 
 class _SerdeCompat:

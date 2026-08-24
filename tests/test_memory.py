@@ -27,7 +27,9 @@ def test_long_term_init_tables():
     os.unlink(db_path)
 
 
-def test_add_and_get_feedback():
+def test_add_feedback_normalizes_wildcards():
+    """add_feedback normalizes wildcard patterns to prefix semantics
+    (get_feedback was removed; get_all_feedback exposes the stored form)."""
     db_path = _get_db_path()
     mem = LongTermMemory(db_path)
     mem.init_tables()
@@ -36,10 +38,10 @@ def test_add_and_get_feedback():
         rule_id="SEC001", feedback_type="false_positive",
         content="This is parameterized, not injection",
     )
-    results = mem.get_feedback("auth/*")
+    results = mem.get_all_feedback()
     assert len(results) == 1
     assert results[0]["rule_id"] == "SEC001"
-    assert results[0]["feedback_type"] == "false_positive"
+    assert results[0]["file_pattern"] == "auth/"
     os.unlink(db_path)
 
 

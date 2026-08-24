@@ -81,19 +81,6 @@ class LongTermMemory:
         conn.commit()
         conn.close()
 
-    def get_feedback(self, file_pattern: str, limit: int = 10) -> list[dict]:
-        """Retrieve recent feedback for a file pattern, newest first."""
-        conn = sqlite3.connect(self._db_path)
-        conn.row_factory = sqlite3.Row
-        glob_pattern = file_pattern.replace("*", "%")
-        rows = conn.execute(
-            "SELECT * FROM feedback WHERE file_pattern LIKE ? "
-            "ORDER BY created_at DESC LIMIT ?",
-            (glob_pattern, limit),
-        ).fetchall()
-        conn.close()
-        return [dict(r) for r in rows]
-
     def search_feedback(
         self,
         file_path: str,

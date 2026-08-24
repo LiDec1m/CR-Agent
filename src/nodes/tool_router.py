@@ -61,9 +61,12 @@ class ToolRouterNode:
         # Dedup cache: when two hunks fall inside the same indexed symbol,
         # _enrich_hunk produces identical added_code for both. Running the
         # same rule on the same content twice wastes compute and creates
-        # duplicate Evidence. Cache by (rule, enriched_code) so the second
-        # hunk reuses the first's result.
-        exec_cache: dict[tuple[str, str], tuple[list[Evidence], RuleOutcomeStatus]] = {}
+        # duplicate Evidence. Cache by (rule, file_path, enriched_code) so
+        # the second hunk reuses the first's result. file_path scopes the
+        # cache to one file: rule behavior can be path-dependent, and a
+        # cross-file identical-code collision must not leak one file's
+        # evidence/outcome into another.
+        exec_cache: dict[tuple[str, str, str], tuple[list[Evidence], RuleOutcomeStatus]] = {}
 
         def _attach(ev: Evidence, key: str, file_path: str) -> None:
             """Attribute one evidence item to a hunk, merging duplicates.
@@ -100,7 +103,7 @@ class ToolRouterNode:
                     logger.warning("Skipping unknown rule %s for %s", rule_name, key)
                     continue
 
-                cache_key = (rule_name, enriched_code)
+                cache_key = (rule_name, hunk.file_path, enriched_code)
                 if cache_key in exec_cache:
                     evidences, status = exec_cache[cache_key]
                 else:

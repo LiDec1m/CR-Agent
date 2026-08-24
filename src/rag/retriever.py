@@ -169,53 +169,6 @@ class RAGRetriever:
         finally:
             conn.close()
 
-    def add_security_knowledge(
-        self,
-        title: str,
-        category: str,
-        rule_id: str,
-        content: str,
-        best_practice: str,
-        references: list[str],
-        embedding: list[float] | None = None,
-    ) -> None:
-        """Insert a security-knowledge record."""
-        if embedding is None:
-            embedding = self._embedding_client.embed(f"{title} {content}")
-        embedding_str = json.dumps(embedding)
-        references_str = json.dumps(references)
-        created_at = datetime.now(timezone.utc).isoformat()
-
-        conn = sqlite3.connect(self._db_path)
-        try:
-            cursor = conn.execute(
-                """
-                INSERT INTO security_knowledge
-                    (title, category, rule_id, content, best_practice,
-                     "references", embedding, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    title,
-                    category,
-                    rule_id,
-                    content,
-                    best_practice,
-                    references_str,
-                    embedding_str,
-                    created_at,
-                ),
-            )
-            rowid = cursor.lastrowid
-            conn.execute(
-                "INSERT INTO security_knowledge_fts(rowid, title, content, "
-                "best_practice) VALUES (?, ?, ?, ?)",
-                (rowid, title, content, best_practice),
-            )
-            conn.commit()
-        finally:
-            conn.close()
-
     # ------------------------------------------------------------------
     # Search operations (hybrid: embedding + FTS5 + RRF)
     # ------------------------------------------------------------------

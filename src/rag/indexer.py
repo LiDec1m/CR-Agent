@@ -61,18 +61,6 @@ class SecurityKnowledgeLoader:
         finally:
             conn.close()
 
-    def reload_from_json(
-        self,
-        json_path: str,
-        embedding_client: Any | None = None,
-    ) -> int:
-        """Clear existing entries and reload from a JSON file.
-
-        Returns the number of entries inserted.
-        """
-        self.clear()
-        return self.load_from_json(json_path, embedding_client)
-
     def load_from_json(
         self,
         json_path: str,
