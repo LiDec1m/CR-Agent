@@ -23,13 +23,34 @@ class PlannerNode:
 
     def __call__(self, state: AgentState) -> dict:
         history: list[dict] = []
+        seen_history_ids: set = set()
+        # Embed-call sharing: identical (file_path, added_code) hunks
+        # need identical retrieval, and each embed() is a real API call.
+        # NOTE: the key must include file_path — the same code in two
+        # files recalls that file's history, not the other's (same
+        # lesson as the exec_cache scoping fix).
+        history_cache: dict[tuple[str, str], list[dict]] = {}
         for hunk in state.hunks:
-            try:
-                history.extend(
-                    self.rag.search_history(hunk.added_code, hunk.file_path)
-                )
-            except Exception:
-                pass
+            cache_key = (hunk.file_path, hunk.added_code)
+            if cache_key in history_cache:
+                hunk_history = history_cache[cache_key]
+            else:
+                try:
+                    hunk_history = self.rag.search_history(
+                        f"{hunk.file_path} {hunk.added_code}", hunk.file_path
+                    )
+                except Exception:
+                    hunk_history = []
+                history_cache[cache_key] = hunk_history
+            for row in hunk_history:
+                # Cross-hunk dedup: the same history row recalled for
+                # several hunks of one file must appear once in the
+                # prompt, not once per hunk.
+                row_id = row.get("id")
+                if row_id in seen_history_ids:
+                    continue
+                seen_history_ids.add(row_id)
+                history.append(row)
 
         # llm_assisted is excluded from the initial plan by construction:
         # it never appears in the available list, and _normalize_plan only
@@ -40,6 +61,20 @@ class PlannerNode:
             f"Added code:\n{hunk.added_code or '(none)'}"
             for hunk in state.hunks
         )
+        # Prompt slimming: keep the fields the Planner LLM can actually
+        # reason over. id/thread_id/created_at stay on the dict (dedup /
+        # audit) but never enter the prompt — same pattern as the Judge
+        # and feedback channels' slim-before-prompt mapping.
+        history_slim = [
+            {
+                "file_path": h.get("file_path"),
+                "diff_summary": h.get("diff_summary"),
+                "risk_titles": h.get("risk_titles", []),
+                "risk_categories": h.get("risk_categories", []),
+                "overall_score": h.get("overall_score"),
+            }
+            for h in history
+        ]
         prompt = (
             "Analyze each diff hunk and select relevant deterministic analysis "
             "rules. Return JSON only: {\"plan_by_hunk\": "
@@ -49,7 +84,7 @@ class PlannerNode:
             "\"reason\" is a short justification of why these tools were "
             "selected for this hunk.\n\n"
             f"Changed hunks:\n{changed}\n\n"
-            f"Historical risks:\n{json.dumps(history)}\n\n"
+            f"Historical risks:\n{json.dumps(history_slim)}\n\n"
             f"Available deterministic rules:\n{json.dumps(available)}"
         )
         exc: Exception | None = None

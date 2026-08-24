@@ -377,25 +377,21 @@ class CodebaseIndexer:
                 }
             ]
 
-        # Batch-compute all symbol embeddings in a single API call.
-        # Each text mirrors the query-side format used by search_codebase:
-        # file path + symbol name + truncated content.
-        embedding_texts = [
-            f"{file_path} {sym['name']} {sym.get('content', '')[:500]}"
-            for sym in symbols
-        ]
-        embeddings = self._embedding_client.embed_batch(embedding_texts)
+        # No symbol embeddings: search_codebase is an exact-path lookup
+        # and never reads the embedding column, so computing one per
+        # symbol was a write-side-only API cost. The schema column stays
+        # (NULL) so pre-migration databases and a future semantic-symbol
+        # search remain compatible.
         imports_str = json.dumps(imports)
 
         conn = sqlite3.connect(self._db_path)
         try:
             count = 0
-            for sym, embedding in zip(symbols, embeddings):
+            for sym in symbols:
                 symbol_name = sym["name"]
                 symbol_type = sym["type"]
                 line_range = sym["lines"]
                 sym_content = sym.get("content", "")
-                embedding_str = json.dumps(embedding)
                 created_at = datetime.now(timezone.utc).isoformat()
 
                 cursor = conn.execute(
@@ -412,7 +408,7 @@ class CodebaseIndexer:
                         line_range,
                         sym_content,
                         imports_str,
-                        embedding_str,
+                        None,
                         created_at,
                     ),
                 )

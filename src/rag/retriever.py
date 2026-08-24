@@ -222,34 +222,39 @@ class RAGRetriever:
     def search_codebase(
         self,
         file_path: str,
-        top_k: int = 5,
+        top_k: int = 50,
     ) -> list[dict[str, Any]]:
-        """FTS5 search codebase index by file path / symbol keywords.
+        """Fetch ALL indexed symbols of one exact file path.
 
-        Also resolves cross-file dependencies: after fetching symbols from
-        the diff file, it looks at each result's ``imports`` list, resolves
-        those import paths to indexed file paths, and fetches symbols from
-        those referenced files. This provides context about functions that
-        the diff file calls but that are defined elsewhere.
+        The caller supplies a precisely known file path, so this is an
+        exact-match lookup, not a fuzzy search: a previous FTS MATCH
+        formulation ranked same-file rows by irrelevant term hits and
+        its LIMIT silently dropped symbols — a hunk falling in a
+        dropped symbol then got an un-enriched fragment from
+        _enrich_hunk and its AST rules quietly stopped working. The
+        defensive top_k cap (default 50) only guards pathological
+        generated files; normal files always return their full symbol
+        table.
+
+        Also resolves cross-file dependencies: after fetching symbols
+        from the diff file, it looks at each result's ``imports`` list,
+        resolves those import paths to indexed file paths, and fetches
+        symbols from those referenced files. This provides context
+        about functions that the diff file calls but that are defined
+        elsewhere.
         """
         conn = sqlite3.connect(self._db_path)
         try:
-            # Build FTS5 query from file_path components
-            fts_query = self._build_fts_query(file_path)
-            if not fts_query:
-                return []
-
             rows = conn.execute(
                 """
-                SELECT c.id, c.file_path, c.symbol_name, c.symbol_type,
-                       c.line_range, c.content, c.imports
-                FROM codebase_index_fts f
-                JOIN codebase_index c ON c.id = f.rowid
-                WHERE codebase_index_fts MATCH ?
-                ORDER BY rank
+                SELECT id, file_path, symbol_name, symbol_type,
+                       line_range, content, imports
+                FROM codebase_index
+                WHERE file_path = ?
+                ORDER BY id
                 LIMIT ?
                 """,
-                (fts_query, top_k),
+                (file_path, top_k),
             ).fetchall()
 
             results: list[dict[str, Any]] = []
@@ -665,8 +670,16 @@ class RAGRetriever:
 
     @staticmethod
     def _build_fts_query(text: str) -> str:
-        """Build an FTS5 MATCH query: wrap each token in double quotes."""
+        """Build an FTS5 MATCH query: quoted tokens OR-joined.
+
+        Tokens are OR-connected, not AND: a long query (a hunk of added
+        code, or hundreds of evidence messages) can never have ALL its
+        tokens present in a single row, so AND semantics returned empty
+        for every long query and the FTS leg was dead weight. With OR,
+        any overlapping token makes the row a candidate and bm25 ranks
+        by how many (and how rare) tokens hit.
+        """
         tokens = text.replace('"', " ").split()
         if not tokens:
             return ""
-        return " ".join(f'"{t}"' for t in tokens)
+        return " OR ".join(f'"{t}"' for t in tokens)
