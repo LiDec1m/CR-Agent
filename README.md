@@ -9,6 +9,7 @@
 - **诚实降级语义**：Planner LLM 不可用 → 立即失败报告（status=failed、退出码 1）；Judge 分批裁决单批降级 → status=degraded 并标注未裁决证据数；合法空计划正常走完全程
 - **证据 hunk 归因去重**：同一证据被多个 hunk 命中时合并为一条携带全部 hunk_keys，报告按 hunk 双呈现（风险行内 Hunks + per-hunk 汇总表）
 - **Judge 分批裁决**：按文件分组、每批 50 条证据、全局 id 引用跨批合并，避免大证据池超出超时窗口导致整体降级
+- **严格 LLM 响应契约**：llm_assisted 证据响应在 chat_json 重试循环内逐字段校验（evidences 键必存、line_no 非负 int、message/rule_id 非空），畸形响应触发修复重试而非被当作“零发现”
 - **RAG 知识增强**：安全知识库 + 历史风险检索 + 代码库上下文检索（Embedding + FTS5 混合检索 + RRF 融合）
 - **SQLite 双层记忆**：短期 Checkpointer + 长期反馈表
 - **可解释证据链**：每个风险都引用至少一条确定性证据

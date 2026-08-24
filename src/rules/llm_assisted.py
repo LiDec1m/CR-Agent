@@ -22,13 +22,18 @@ _SEVERITY_VALUES = sorted(s.value for s in Severity)
 def _validate_llm_evidences(parsed) -> None:
     """Contract check run inside the chat_json retry loop.
 
-    Raises ValueError on contract violations (non-list evidences or an
-    unknown severity), so chat_json retries with a repair prompt instead
-    of the caller silently degrading to defaults.
+    Raises ValueError on contract violations, so chat_json retries with
+    a repair prompt instead of the caller silently degrading to
+    defaults. The contract is strict on purpose: a missing
+    ``evidences`` key, a non-int/negative ``line_no``, or an incomplete
+    evidence item is a malformed response to be repaired, not "zero
+    findings".
     """
     if not isinstance(parsed, dict):
         raise ValueError("response must be a JSON object")
-    evidences = parsed.get("evidences", [])
+    if "evidences" not in parsed:
+        raise ValueError("response must contain an 'evidences' key")
+    evidences = parsed["evidences"]
     if not isinstance(evidences, list):
         raise ValueError("'evidences' must be a list")
     for i, ev in enumerate(evidences):
@@ -39,6 +44,25 @@ def _validate_llm_evidences(parsed) -> None:
             raise ValueError(
                 f"evidences[{i}].severity must be one of {_SEVERITY_VALUES}; "
                 f"got {severity!r}"
+            )
+        line_no = ev.get("line_no")
+        if (
+            not isinstance(line_no, int) or isinstance(line_no, bool)
+            or line_no < 0
+        ):
+            raise ValueError(
+                f"evidences[{i}].line_no must be a non-negative int; "
+                f"got {line_no!r}"
+            )
+        message = ev.get("message")
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError(
+                f"evidences[{i}].message must be a non-empty string"
+            )
+        rule_id = ev.get("rule_id")
+        if not isinstance(rule_id, str) or not rule_id:
+            raise ValueError(
+                f"evidences[{i}].rule_id must be a non-empty string"
             )
 
 
@@ -93,19 +117,27 @@ def create_llm_assisted_rule(llm: LLMClient) -> Any:
 
         results: list[Evidence] = []
         for ev in raw_evidences:
-            # Severity is guaranteed valid by _validate_llm_evidences; the
-            # try/except is a last-resort guard so a contract regression
-            # degrades to a labeled fallback instead of crashing the round.
+            # Severity/line_no/message/rule_id are guaranteed valid by
+            # _validate_llm_evidences; the fallbacks below are a
+            # last-resort guard so a contract regression degrades to a
+            # labeled fallback instead of crashing the round. They also
+            # catch TypeError: non-string enum inputs (None, list) raise
+            # TypeError, not ValueError, from enum construction.
             try:
                 category = RiskCategory(ev.get("category", "bug_risk"))
-            except ValueError:
+            except (ValueError, TypeError):
                 category = RiskCategory.BUG_RISK
             try:
                 severity = Severity(ev.get("severity", "medium"))
-            except ValueError:
+            except (ValueError, TypeError):
                 severity = Severity.MEDIUM
 
-            line_no = ev.get("line_no", 0) or 0
+            line_no = ev.get("line_no", 0)
+            if (
+                not isinstance(line_no, int) or isinstance(line_no, bool)
+                or line_no < 0
+            ):
+                line_no = 0
             results.append(
                 Evidence(
                     source="llm_assisted",

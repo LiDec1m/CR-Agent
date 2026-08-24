@@ -1,0 +1,535 @@
+Parsed 75 hunk(s) from diff.
+Initialising components...
+Building analysis graph...
+Running analysis...
+
+╭────────────────────────── Code Change Risk Report ───────────────────────────╮
+│ Repository: code-risk-agent                                                  │
+│ Commit: 5ec6a23                                                              │
+│ Status: completed                                                            │
+│ Files scanned: 18                                                            │
+│ Total hunks: 75                                                              │
+│ Conclusive coverage: 75/75 hunks                                             │
+│ Coverage-limited hunks: 0                                                    │
+│ Overall risk score: 0.50                                                     │
+│ Reflection rounds: 2                                                         │
+│                                                                              │
+│ Detected 21 risk(s).                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+                              Detected 21 Risk(s)                               
+┏━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃ #    ┃ Severity ┃ Title           ┃ Category        ┃ Score ┃ Location       ┃
+┡━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│ 1    │ MEDIUM   │ Function        │ complexity      │  0.45 │ src/graph.py:… │
+│      │          │ 'build_graph'   │                 │       │                │
+│      │          │ is 81 lines     │                 │       │                │
+│      │          │ long            │                 │       │                │
+│ 2    │ LOW      │ Unused import   │ bug_risk        │  0.10 │ src/llm/clien… │
+│      │          │ 'Any' in        │                 │       │                │
+│      │          │ src/llm/client… │                 │       │                │
+│ 3    │ MEDIUM   │ Function        │ complexity      │  0.45 │ src/llm/clien… │
+│      │          │ 'chat_json' is  │                 │       │                │
+│      │          │ too long        │                 │       │                │
+│ 4    │ LOW      │ Magic number    │ style           │  0.20 │ src/llm/clien… │
+│      │          │ detected in     │                 │       │                │
+│      │          │ src/llm/client… │                 │       │                │
+│ 5    │ LOW      │ AgentPhase is   │ maintainability │  0.10 │ src/models/en… │
+│      │          │ missing a       │                 │       │                │
+│      │          │ docstring       │                 │       │                │
+│ 6    │ LOW      │ Cyclomatic      │ complexity      │  0.30 │ src/nodes/pla… │
+│      │          │ complexity in   │                 │       │                │
+│      │          │ _normalize_plan │                 │       │                │
+│      │          │ exceeds         │                 │       │                │
+│      │          │ threshold       │                 │       │                │
+│ 7    │ MEDIUM   │ High cyclomatic │ complexity      │  0.35 │ src/nodes/ref… │
+│      │          │ complexity in   │                 │       │                │
+│      │          │ '_new_assignme… │                 │       │                │
+│ 8    │ MEDIUM   │ ToolRouterNode… │ complexity      │  0.50 │ src/nodes/too… │
+│      │          │ is too long and │                 │       │                │
+│      │          │ moderately      │                 │       │                │
+│      │          │ complex         │                 │       │                │
+│ 9    │ MEDIUM   │ ToolRouterNode… │ complexity      │  0.50 │ src/nodes/too… │
+│      │          │ is too long and │                 │       │                │
+│      │          │ moderately      │                 │       │                │
+│      │          │ complex         │                 │       │                │
+│ 10   │ MEDIUM   │ Unhashable      │ bug_risk        │  0.30 │ src/rules/llm… │
+│      │          │ severity value  │                 │       │                │
+│      │          │ can escape      │                 │       │                │
+│      │          │ validation      │                 │       │                │
+│      │          │ retry loop      │                 │       │                │
+│ 11   │ LOW      │ Missing         │ bug_risk        │  0.20 │ src/rules/llm… │
+│      │          │ `evidences` key │                 │       │                │
+│      │          │ accepted as     │                 │       │                │
+│      │          │ empty result    │                 │       │                │
+│ 12   │ LOW      │ Incomplete      │ bug_risk        │  0.25 │ src/rules/llm… │
+│      │          │ evidence item   │                 │       │                │
+│      │          │ fields are not  │                 │       │                │
+│      │          │ validated       │                 │       │                │
+│ 13   │ LOW      │ Enum fallback   │ bug_risk        │  0.20 │ src/rules/llm… │
+│      │          │ catches only    │                 │       │                │
+│      │          │ ValueError      │                 │       │                │
+│ 14   │ MEDIUM   │ LLM-provided    │ bug_risk        │  0.30 │ src/rules/llm… │
+│      │          │ line_no is not  │                 │       │                │
+│      │          │ validated or    │                 │       │                │
+│      │          │ coerced         │                 │       │                │
+│ 15   │ MEDIUM   │ Prompt          │ security        │  0.50 │ src/rules/llm… │
+│      │          │ injection via   │                 │       │                │
+│      │          │ untrusted diff  │                 │       │                │
+│      │          │ content         │                 │       │                │
+│ 16   │ LOW      │ Unbounded LLM   │ performance     │  0.10 │ src/rules/llm… │
+│      │          │ evidence list   │                 │       │                │
+│      │          │ can cause       │                 │       │                │
+│      │          │ resource        │                 │       │                │
+│      │          │ pressure        │                 │       │                │
+│ 17   │ LOW      │ Function        │ complexity      │  0.15 │ src/rules/llm… │
+│      │          │ `create_llm_as… │                 │       │                │
+│      │          │ is too long     │                 │       │                │
+│ 18   │ LOW      │ Function        │ complexity      │  0.15 │ src/rules/llm… │
+│      │          │ `llm_assisted`  │                 │       │                │
+│      │          │ is too long     │                 │       │                │
+│ 19   │ LOW      │ Test functions  │ maintainability │  0.10 │ tests/test_gr… │
+│      │          │ missing         │                 │       │                │
+│      │          │ docstrings      │                 │       │                │
+│ 20   │ LOW      │ Missing         │ maintainability │  0.10 │ tests/test_no… │
+│      │          │ docstrings in   │                 │       │                │
+│      │          │ tests/test_nod… │                 │       │                │
+│      │          │ test functions  │                 │       │                │
+│ 21   │ LOW      │ Missing         │ maintainability │  0.10 │ tests/test_ru… │
+│      │          │ docstrings for  │                 │       │                │
+│      │          │ test functions  │                 │       │                │
+│      │          │ in              │                 │       │                │
+│      │          │ tests/test_rul… │                 │       │                │
+└──────┴──────────┴─────────────────┴─────────────────┴───────┴────────────────┘
+╭────────────── Risk #1: Function 'build_graph' is 81 lines long ──────────────╮
+│ Description: The function 'build_graph' in src/graph.py spans lines 62-142   │
+│ (81 lines), exceeding the 50-line threshold. This increases cognitive load   │
+│ and makes the graph construction logic harder to maintain and test.          │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/graph.py:75                                                       │
+│   -  function_too_long (medium, conf=1.00): Function 'build_graph' is 81     │
+│ lines long (threshold: 50)                                                   │
+│ Suggestion: Extract logical sections such as node construction, edge wiring, │
+│ and graph compilation into named helper functions. Each helper should have a │
+│ single responsibility and fit within approximately 20-30 lines.              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭───────────── Risk #2: Unused import 'Any' in src/llm/client.py ──────────────╮
+│ Description: Imported 'Any' appears unused. Leaving unused imports adds      │
+│ noise and can mask stale dependencies.                                       │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/llm/client.py:5                                                   │
+│   -  unused_import (low, conf=1.00): Imported 'Any' appears unused           │
+│ Suggestion: Remove the unused 'Any' import and enable automated              │
+│ unused-import detection such as ruff F401 or organize-imports on save.       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭───────────────── Risk #3: Function 'chat_json' is too long ──────────────────╮
+│ Description: Function 'chat_json' is 73 lines long, exceeding the 50-line    │
+│ threshold. Long functions are harder to understand, test, and maintain.      │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/llm/client.py:123, src/llm/client.py:73                           │
+│   -  function_too_long (medium, conf=1.00): Function 'chat_json' is 73 lines │
+│ long (threshold: 50)                                                         │
+│ Suggestion: Extract logical sections in 'chat_json' (e.g. retry/repair loop, │
+│ response validation, and payload construction) into named helper functions.  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────── Risk #4: Magic number detected in src/llm/client.py ─────────────╮
+│ Description: A magic number at line 105 lacks a descriptive name, making     │
+│ intent harder to infer and maintain.                                         │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/llm/client.py:105                                                 │
+│   -  magic_number (low, conf=1.00): Magic number detected at line 105        │
+│ Suggestion: Extract the value at line 105 into a named module-level          │
+│ constant, parameter, or enum with a descriptive name.                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭───────────────── Risk #5: AgentPhase is missing a docstring ─────────────────╮
+│ Description: The public enum class AgentPhase in src/models/enums.py has no  │
+│ docstring, reducing API clarity and maintainability.                         │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/models/enums.py:32                                                │
+│   -  missing_docstring (low, conf=1.00): 'AgentPhase' is missing a docstring │
+│ Suggestion: Add a concise docstring to AgentPhase describing its purpose and │
+│ enum members, following PEP 257.                                             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──── Risk #6: Cyclomatic complexity in _normalize_plan exceeds threshold ─────╮
+│ Description: The function _normalize_plan has cyclomatic complexity 11,      │
+│ slightly above the configured threshold of 10. High branching makes the      │
+│ normalization logic harder to test and maintain.                             │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/nodes/planner.py:12, src/nodes/planner.py:38,                     │
+│ src/nodes/planner.py:56                                                      │
+│   -  high_cyclomatic (medium, conf=1.00): Function '_normalize_plan' has     │
+│ cyclomatic complexity 11 (threshold: 10)                                     │
+│ Suggestion: Extract branch-heavy sections into named helpers or replace      │
+│ nested conditionals with lookup tables/early returns to reduce complexity    │
+│ below 10.                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭───────── Risk #7: High cyclomatic complexity in '_new_assignments' ──────────╮
+│ Description: The method '_new_assignments' has cyclomatic complexity 12,     │
+│ exceeding the threshold of 10. This increases cognitive load and makes the   │
+│ method harder to test and maintain.                                          │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/nodes/reflection.py:48, src/nodes/reflection.py:61,               │
+│ src/nodes/reflection.py:84, src/nodes/reflection.py:96                       │
+│   -  high_cyclomatic (medium, conf=1.00): Function '_new_assignments' has    │
+│ cyclomatic complexity 12 (threshold: 10)                                     │
+│ Suggestion: Refactor '_new_assignments' into smaller single-responsibility   │
+│ helpers and use guard clauses or lookup tables to reduce branching below the │
+│ complexity threshold.                                                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──── Risk #8: ToolRouterNode.__call__ is too long and moderately complex ─────╮
+│ Description: ToolRouterNode.__call__ spans 81 lines and has cyclomatic       │
+│ complexity 11, both just above thresholds (50 lines / 10). The method        │
+│ orchestrates codebase lookup, cache setup, rule iteration, execution,        │
+│ outcome recording, and evidence assembly, making it harder to test and       │
+│ maintain.                                                                    │
+│ Evidence chain (2 item(s)):                                                  │
+│ Hunks: src/nodes/tool_router.py:30, src/nodes/tool_router.py:98              │
+│   -  function_too_long (medium, conf=1.00): Function '__call__' is 81 lines  │
+│ long (threshold: 50)                                                         │
+│   -  high_cyclomatic (medium, conf=1.00): Function '__call__' has cyclomatic │
+│ complexity 11 (threshold: 10)                                                │
+│ Suggestion: Extract logical sections (cache preparation, rule dispatch,      │
+│ outcome recording) into named helper methods or functions. Use guard clauses │
+│ and small helpers to reduce branching and keep __call__ focused on           │
+│ orchestration.                                                               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭── Risk #9: ToolRouterNode._enrich_hunk is too long and moderately complex ───╮
+│ Description: ToolRouterNode._enrich_hunk spans 56 lines and has cyclomatic   │
+│ complexity 13, above the 50-line and 10-branch thresholds. It performs       │
+│ enrichment logic with several conditional paths, increasing cognitive load   │
+│ and regression risk.                                                         │
+│ Evidence chain (2 item(s)):                                                  │
+│ Hunks: src/nodes/tool_router.py:30, src/nodes/tool_router.py:98              │
+│   -  function_too_long (medium, conf=1.00): Function '_enrich_hunk' is 56    │
+│ lines long (threshold: 50)                                                   │
+│   -  high_cyclomatic (medium, conf=1.00): Function '_enrich_hunk' has        │
+│ cyclomatic complexity 13 (threshold: 10)                                     │
+│ Suggestion: Break _enrich_hunk into smaller single-responsibility helpers    │
+│ (e.g. resolve symbol context, build enriched content, apply fallback logic). │
+│ Use early returns to reduce nesting and lower cyclomatic complexity.         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──── Risk #10: Unhashable severity value can escape validation retry loop ────╮
+│ Description: `_validate_llm_evidences` performs `severity not in             │
+│ _SEVERITY_VALUES`. If the LLM returns an unhashable JSON value such as a     │
+│ list or dict for severity and `_SEVERITY_VALUES` is a set, Python raises     │
+│ TypeError instead of ValueError. Since the chat_json retry/repair loop is    │
+│ documented to catch ValueError contract violations, this can escape the      │
+│ retry loop.                                                                  │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/rules/llm_assisted.py:16                                          │
+│   -  llm_assisted (medium, conf=0.70): The membership check `severity not in │
+│ _SEVERITY_VALUES` can raise TypeError instead of the documented ValueError   │
+│ if `severity` is an unhashable JSON value (e.g. a list/dict) and             │
+│ `_SEVERITY_VALUES` is a set. In that case the retry/repair loop may not      │
+│ catch the error.                                                             │
+│ Suggestion: Guard the membership check with a type/isinstance check or catch │
+│ TypeError and convert it to ValueError so malformed severity values are      │
+│ retried.                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭───────── Risk #11: Missing `evidences` key accepted as empty result ─────────╮
+│ Description: The contract check uses `parsed.get("evidences", [])`, so an    │
+│ LLM response that omits the `evidences` field entirely passes validation and │
+│ may be interpreted as zero findings instead of triggering a repair/retry.    │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/rules/llm_assisted.py:16                                          │
+│   -  llm_assisted (low, conf=0.70): Using `parsed.get("evidences", [])`      │
+│ treats a missing `evidences` key as valid empty output. Malformed LLM        │
+│ responses that omit `evidences` entirely will pass validation and may be     │
+│ interpreted as zero findings instead of triggering a repair/retry.           │
+│ Suggestion: Explicitly require the key, e.g. `if "evidences" not in parsed:  │
+│ raise ValueError("missing evidences key")`.                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────── Risk #12: Incomplete evidence item fields are not validated ─────────╮
+│ Description: Each evidence item is only checked to be a dict and to have a   │
+│ valid severity. Other required fields are not validated, so an incomplete    │
+│ evidence object can pass this contract check and fail later or be silently   │
+│ skipped.                                                                     │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/rules/llm_assisted.py:16                                          │
+│   -  llm_assisted (low, conf=0.70): Each evidence item is only checked to be │
+│ a dict and to have a valid severity. Other required fields are not           │
+│ validated, so an incomplete evidence object can pass this contract check and │
+│ fail later with KeyError or be silently skipped.                             │
+│ Suggestion: Validate required fields such as `rule_id`, `category`,          │
+│ `description`, and `line_no` before constructing Evidence objects.           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭────────────── Risk #13: Enum fallback catches only ValueError ───────────────╮
+│ Description: The fallback when converting LLM-provided category/severity     │
+│ values to enums catches only `ValueError`. Invalid enum inputs like None,    │
+│ lists, or numbers can raise TypeError or other exceptions, defeating the     │
+│ intended last-resort guard on malformed LLM evidence.                        │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/rules/llm_assisted.py:68, src/rules/llm_assisted.py:78,           │
+│ src/rules/llm_assisted.py:93                                                 │
+│   -  llm_assisted (medium, conf=0.70): The fallback catches only ValueError. │
+│ Invalid enum inputs like None, lists, or numbers can raise TypeError or      │
+│ other exceptions from RiskCategory(...) or Severity(...), defeating the      │
+│ last-resort guard on malformed LLM evidence.                                 │
+│ Suggestion: Catch `(ValueError, TypeError)` or validate the type before enum │
+│ conversion.                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭───────── Risk #14: LLM-provided line_no is not validated or coerced ─────────╮
+│ Description: `line_no` is taken from LLM output and passed directly to       │
+│ `Evidence.line_range` without int coercion, non-negative check, or bounds    │
+│ validation. Values such as `"12"`, `-1`, or out-of-range integers can        │
+│ produce invalid evidence metadata or downstream runtime errors.              │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/rules/llm_assisted.py:68, src/rules/llm_assisted.py:78,           │
+│ src/rules/llm_assisted.py:93                                                 │
+│   -  llm_assisted (medium, conf=0.70): line_no is taken from LLM output and  │
+│ passed directly to Evidence.line_range without int coercion, non-negative    │
+│ check, or bounds validation. Values such as "12", -1, or out-of-range        │
+│ integers can produce invalid evidence metadata or downstream runtime errors. │
+│ Suggestion: Coerce `line_no` to int and enforce file/hunk bounds or fall     │
+│ back to a safe default before constructing evidence.                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─────────── Risk #15: Prompt injection via untrusted diff content ────────────╮
+│ Description: Untrusted diff text from added and removed lines is             │
+│ interpolated directly into the LLM prompt. Malicious code in the diff can    │
+│ act as a prompt injection to suppress findings, fabricate safe results, or   │
+│ steer the model output.                                                      │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/rules/llm_assisted.py:68, src/rules/llm_assisted.py:78,           │
+│ src/rules/llm_assisted.py:93                                                 │
+│   -  llm_assisted (medium, conf=0.70): Untrusted diff text from              │
+│ hunk.added_code and removed lines is interpolated directly into the LLM      │
+│ prompt. Malicious code in the diff can act as a prompt injection to suppress │
+│ findings, fabricate safe results, or steer the model output.                 │
+│ Suggestion: Treat diff content as data: delimit it clearly, add explicit     │
+│ instructions to ignore instructions inside code, and keep                    │
+│ destructive/security decisions outside the LLM path.                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭───── Risk #16: Unbounded LLM evidence list can cause resource pressure ──────╮
+│ Description: There is no cap on the number or size of evidences returned by  │
+│ the LLM. A malformed or malicious response can force construction of a very  │
+│ large list of Evidence objects and duplicate the full code snippet on each   │
+│ item, causing memory/CPU pressure.                                           │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/rules/llm_assisted.py:68, src/rules/llm_assisted.py:78,           │
+│ src/rules/llm_assisted.py:93                                                 │
+│   -  llm_assisted (low, conf=0.70): There is no cap on the number or size of │
+│ evidences returned by the LLM. A malformed or malicious response can force   │
+│ construction of a very large list of Evidence objects and duplicate the full │
+│ code snippet on each item, causing memory/CPU pressure.                      │
+│ Suggestion: Cap the maximum number of evidence items accepted and avoid      │
+│ duplicating the full snippet per item.                                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭───────── Risk #17: Function `create_llm_assisted_rule` is too long ──────────╮
+│ Description: `create_llm_assisted_rule` is 76 lines long, exceeding the      │
+│ 50-line threshold. It mixes rule creation, prompt building, response         │
+│ validation, and evidence construction.                                       │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/rules/llm_assisted.py:93                                          │
+│   -  function_too_long (medium, conf=1.00): Function                         │
+│ 'create_llm_assisted_rule' is 76 lines long (threshold: 50)                  │
+│ Suggestion: Extract logical sections into named helper functions such as     │
+│ prompt building, response validation, and evidence construction.             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─────────────── Risk #18: Function `llm_assisted` is too long ────────────────╮
+│ Description: The nested `llm_assisted` function is 67 lines long, exceeding  │
+│ the 50-line threshold. This reduces readability and testability of the rule  │
+│ logic.                                                                       │
+│ Evidence chain (1 item(s)):                                                  │
+│ Hunks: src/rules/llm_assisted.py:93                                          │
+│   -  function_too_long (medium, conf=1.00): Function 'llm_assisted' is 67    │
+│ lines long (threshold: 50)                                                   │
+│ Suggestion: Break the nested function into smaller helpers for prompt        │
+│ composition, response parsing, and evidence construction.                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────── Risk #19: Test functions missing docstrings ─────────────────╮
+│ Description: Multiple test functions in tests/test_graph.py lack docstrings: │
+│ test_graph_runs_end_to_end, test_graph_checkpointer_persists_state,          │
+│ test_graph_round_cap_still_produces_report_and_is_observable, and            │
+│ test_graph_reflection_notes_not_duplicated. While test names are             │
+│ descriptive, adding short docstrings would improve maintainability.          │
+│ Evidence chain (4 item(s)):                                                  │
+│ Hunks: tests/test_graph.py:114, tests/test_graph.py:134,                     │
+│ tests/test_graph.py:158, tests/test_graph.py:173, tests/test_graph.py:32,    │
+│ tests/test_graph.py:47, tests/test_graph.py:75, tests/test_graph.py:86       │
+│   -  missing_docstring (low, conf=1.00): 'test_graph_runs_end_to_end' is     │
+│ missing a docstring                                                          │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_graph_checkpointer_persists_state' is missing a docstring              │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_graph_round_cap_still_produces_report_and_is_observable' is missing a  │
+│ docstring                                                                    │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_graph_reflection_notes_not_duplicated' is missing a docstring          │
+│ Suggestion: Add concise docstrings to these test functions describing the    │
+│ behavior under test, or configure the linter to ignore missing docstrings in │
+│ test files if project convention omits them.                                 │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭───── Risk #20: Missing docstrings in tests/test_nodes.py test functions ─────╮
+│ Description: Four test functions (test_reporter_empty_state_zero_score,      │
+│ test_reflection_finalize_phase_is_reporting,                                 │
+│ test_reflection_round_cap_phase_is_reporting,                                │
+│ test_judge_no_ltm_skips_feedback_recall) are missing docstrings. The flagged │
+│ pattern is present in the code, and while test names are descriptive,        │
+│ MAIN001 expects docstrings for public functions, so this is a minor          │
+│ maintainability issue.                                                       │
+│ Evidence chain (4 item(s)):                                                  │
+│ Hunks: tests/test_nodes.py:145                                               │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_reporter_empty_state_zero_score' is missing a docstring                │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_reflection_finalize_phase_is_reporting' is missing a docstring         │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_reflection_round_cap_phase_is_reporting' is missing a docstring        │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_judge_no_ltm_skips_feedback_recall' is missing a docstring             │
+│ Suggestion: Add concise docstrings to these test functions, for example      │
+│ """Verify reporter produces zero score and default summary for an empty      │
+│ state."""                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Risk #21: Missing docstrings for test functions in tests/test_rule_outcomes─╮
+│ Description: The module-level test functions                                 │
+│ `test_router_records_degraded_for_llm_assisted_failure` and                  │
+│ `test_router_records_failed_for_non_llm_rule_error`, and the nested helper   │
+│ `unavailable`, lack docstrings. While their names are descriptive, adding    │
+│ docstrings documents intent and expected outcomes.                           │
+│ Evidence chain (3 item(s)):                                                  │
+│ Hunks: tests/test_rule_outcomes.py:70                                        │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_router_records_degraded_for_llm_assisted_failure' is missing a         │
+│ docstring                                                                    │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_router_records_failed_for_non_llm_rule_error' is missing a docstring   │
+│   -  missing_docstring (low, conf=1.00): 'unavailable' is missing a          │
+│ docstring                                                                    │
+│ Suggestion: Add short docstrings to these test functions and helper          │
+│ explaining the scenario being verified, e.g. `"""LLM-assisted failures       │
+│ should be recorded as DEGRADED without evidence."""`                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭────────────────────── Dismissed Evidence (10 item(s)) ───────────────────────╮
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_security_knowledge_slimmed_in_prompt' is missing a docstring           │
+│     Reason: Test function in tests/test_judge_input.py; missing docstring is │
+│ an accepted test-suite convention and does not create a meaningful           │
+│ maintainability risk.                                                        │
+│   -  missing_docstring (low, conf=1.00):                                     │
+│ 'test_snippet_kept_when_codebase_missing' is missing a docstring             │
+│     Reason: Test function in tests/test_judge_input.py; missing docstring is │
+│ an accepted test-suite convention and does not create a meaningful           │
+│ maintainability risk.                                                        │
+│   -  sql_injection (high, conf=1.00): Potential SQL injection: string        │
+│ concatenation in SQL query at line 24                                        │
+│     Reason: Provided codebase context for src/memory/long_term.py line 24    │
+│ shows a static CREATE TABLE column definition (created_at TIMESTAMP DEFAULT  │
+│ CURRENT_TIMESTAMP), not string concatenation in a SQL query. No              │
+│ user-controlled SQL construction is present at this line, so the evidence is │
+│ a false positive.                                                            │
+│   -  llm_assisted (high, conf=0.70): Each ev in raw_evidences is assumed to  │
+│ be a mapping and ev.get is called without an isinstance(ev, dict) guard. If  │
+│ the LLM returns a list containing strings, numbers, or null, this raises     │
+│ AttributeError/TypeError and aborts rule evaluation instead of degrading     │
+│ cleanly.                                                                     │
+│     Reason: False positive: `_validate_llm_evidences` already checks each    │
+│ evidence item is a dict and raises ValueError before `raw_evidences` is      │
+│ processed, so non-dict entries are rejected/retried by the chat_json         │
+│ contract loop.                                                               │
+│   -  llm_assisted (medium, conf=0.70): llm.chat_json is only checked for     │
+│ None. A non-mapping JSON response such as a list or string passes the is not │
+│ None check and then fails on response.get(...) outside the try/except,       │
+│ bypassing the intended LLMAnalysisDegraded path.                             │
+│     Reason: False positive: `_validate_llm_evidences` starts with            │
+│ `isinstance(parsed, dict)` and raises ValueError for non-mapping JSON, so a  │
+│ list or string response is rejected/retried rather than passed to            │
+│ `response.get(...)`.                                                         │
+│   -  magic_number (low, conf=1.00): Magic number detected at line 75         │
+│     Reason: The flagged numeric literal at line 75 is the index 0 in         │
+│ hunks[0], which is an acceptable idiom per STY002 (zero/one are not          │
+│ considered magic numbers) and is not a true magic number risk.               │
+│   -  unused_import (low, conf=1.00): Imported 'JudgeNode' appears unused     │
+│     Reason: JudgeNode is used in test_judge_no_ltm_skips_feedback_recall, so │
+│ the unused-import warning is a false positive.                               │
+│   -  missing_docstring (low, conf=1.00): '_state' is missing a docstring     │
+│     Reason: Private test helper `_state` in a test file; not a public API    │
+│ function, so missing docstring is not a meaningful maintainability risk.     │
+│   -  missing_docstring (low, conf=1.00): '_node_with' is missing a docstring │
+│     Reason: Private test helper `_node_with` in a test file; not a public    │
+│ API function, so missing docstring is not a meaningful maintainability risk. │
+│   -  missing_docstring (low, conf=1.00): 'test_no_digest_without_hunks' is   │
+│ missing a docstring                                                          │
+│     Reason: Test function `test_no_digest_without_hunks` in a test file;     │
+│ test names are self-describing and not public API, so missing docstring is   │
+│ not a meaningful maintainability risk.                                       │
+╰──────────────────────────────────────────────────────────────────────────────╯
+                        Per-hunk Summary                         
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━┳━━━━━━━┓
+┃ Hunk                              ┃ Checks ┃ Evidence ┃ Risks ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━╇━━━━━━━┩
+│ main.py:144                       │      4 │        0 │     0 │
+│ main.py:228                       │      4 │        0 │     0 │
+│ src/graph.py:35                   │      4 │        0 │     0 │
+│ src/graph.py:44                   │      4 │        0 │     0 │
+│ src/graph.py:75                   │      4 │        1 │     1 │
+│ src/llm/client.py:5               │      3 │        1 │     1 │
+│ src/llm/client.py:73              │      4 │        1 │     1 │
+│ src/llm/client.py:105             │      4 │        1 │     1 │
+│ src/llm/client.py:123             │      4 │        1 │     1 │
+│ src/memory/long_term.py:24        │      4 │        1 │     0 │
+│ src/memory/long_term.py:66        │      4 │        1 │     0 │
+│ src/models/enums.py:32            │      4 │        1 │     1 │
+│ src/models/state.py:126           │      4 │        0 │     0 │
+│ src/models/state.py:136           │      3 │        0 │     0 │
+│ src/models/state.py:169           │      4 │        0 │     0 │
+│ src/models/state.py:180           │      4 │        0 │     0 │
+│ src/models/state.py:196           │      4 │        0 │     0 │
+│ src/nodes/judge.py:4              │      4 │        0 │     0 │
+│ src/nodes/judge.py:153            │      1 │        0 │     0 │
+│ src/nodes/judge.py:198            │      1 │        0 │     0 │
+│ src/nodes/judge.py:278            │      4 │        0 │     0 │
+│ src/nodes/judge.py:302            │      4 │        0 │     0 │
+│ src/nodes/planner.py:5            │      4 │        0 │     0 │
+│ src/nodes/planner.py:12           │      4 │        1 │     1 │
+│ src/nodes/planner.py:38           │      4 │        1 │     1 │
+│ src/nodes/planner.py:56           │      4 │        1 │     1 │
+│ src/nodes/reflection.py:5         │      4 │        0 │     0 │
+│ src/nodes/reflection.py:14        │      1 │        0 │     0 │
+│ src/nodes/reflection.py:48        │      3 │        1 │     1 │
+│ src/nodes/reflection.py:61        │      4 │        1 │     1 │
+│ src/nodes/reflection.py:84        │      3 │        1 │     1 │
+│ src/nodes/reflection.py:96        │      3 │        1 │     1 │
+│ src/nodes/reporter.py:16          │      4 │        0 │     0 │
+│ src/nodes/reporter.py:44          │      3 │        0 │     0 │
+│ src/nodes/tool_router.py:30       │      4 │        4 │     2 │
+│ src/nodes/tool_router.py:98       │      4 │        4 │     2 │
+│ src/rules/llm_assisted.py:16      │      4 │        3 │     3 │
+│ src/rules/llm_assisted.py:68      │      4 │        6 │     4 │
+│ src/rules/llm_assisted.py:78      │      4 │        6 │     4 │
+│ src/rules/llm_assisted.py:93      │      4 │        8 │     6 │
+│ tests/test_e2e_fixtures.py:47     │      4 │        0 │     0 │
+│ tests/test_e2e_fixtures.py:86     │      4 │        0 │     0 │
+│ tests/test_e2e_fixtures.py:262    │      4 │        0 │     0 │
+│ tests/test_graph.py:32            │      4 │        1 │     1 │
+│ tests/test_graph.py:47            │      4 │        1 │     1 │
+│ tests/test_graph.py:75            │      4 │        2 │     1 │
+│ tests/test_graph.py:86            │      4 │        2 │     1 │
+│ tests/test_graph.py:114           │      4 │        1 │     1 │
+│ tests/test_graph.py:134           │      4 │        1 │     1 │
+│ tests/test_graph.py:158           │      4 │        1 │     1 │
+│ tests/test_graph.py:173           │      4 │        1 │     1 │
+│ tests/test_judge_input.py:56      │      4 │        0 │     0 │
+│ tests/test_judge_input.py:64      │      4 │        0 │     0 │
+│ tests/test_judge_input.py:73      │      4 │        1 │     0 │
+│ tests/test_judge_input.py:81      │      1 │        1 │     0 │
+│ tests/test_judge_input.py:93      │      4 │        1 │     0 │
+│ tests/test_judge_input.py:145     │      4 │        0 │     0 │
+│ tests/test_judge_input.py:166     │      4 │        0 │     0 │
+│ tests/test_judge_input.py:184     │      4 │        0 │     0 │
+│ tests/test_nodes.py:8             │      4 │        1 │     0 │
+│ tests/test_nodes.py:28            │      4 │        0 │     0 │
+│ tests/test_nodes.py:72            │      4 │        0 │     0 │
+│ tests/test_nodes.py:102           │      4 │        0 │     0 │
+│ tests/test_nodes.py:114           │      4 │        0 │     0 │
+│ tests/test_nodes.py:131           │      4 │        0 │     0 │
+│ tests/test_nodes.py:145           │      4 │        4 │     1 │
+│ tests/test_reflection_input.py:27 │      4 │        2 │     0 │
+│ tests/test_reflection_input.py:39 │      4 │        0 │     0 │
+│ tests/test_reflection_input.py:57 │      4 │        0 │     0 │
+│ tests/test_reflection_input.py:72 │      4 │        0 │     0 │
+│ tests/test_reflection_input.py:88 │      4 │        1 │     0 │
+│ tests/test_rule_outcomes.py:44    │      4 │        0 │     0 │
+│ tests/test_rule_outcomes.py:70    │      4 │        3 │     1 │
+│ tests/test_rule_outcomes.py:99    │      4 │        0 │     0 │
+│ tests/test_rule_outcomes.py:120   │      4 │        0 │     0 │
+└───────────────────────────────────┴────────┴──────────┴───────┘
