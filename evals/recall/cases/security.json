@@ -111,6 +111,117 @@
     "rubric": "记录 recall；不作门禁"
   },
   {
+    "id": "sec-golden-006",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "pickle 反序列化不可信数据证据召回 SEC004（grounded: sk-009 pickle.loads）",
+    "input": {
+      "query": "pickle.loads on untrusted request body bytes allows arbitrary constructor execution",
+      "rule_ids": ["SEC004"]
+    },
+    "expected_categories": ["SEC004"],
+    "rubric": "任一 rule_id 属于 expected_categories 的结果行存在即 pass"
+  },
+  {
+    "id": "sec-golden-007",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "yaml.load 未用 SafeLoader 证据召回 SEC004（grounded: sk-010）",
+    "input": {
+      "query": "yaml.load with default Loader resolves python object tags without SafeLoader",
+      "rule_ids": ["SEC004"]
+    },
+    "expected_categories": ["SEC004"],
+    "rubric": "任一 rule_id 属于 expected_categories 的结果行存在即 pass"
+  },
+  {
+    "id": "sec-golden-008",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "连接字符串内嵌凭据证据召回 SEC002 且目标行应排第一（grounded: sk-007）",
+    "input": {
+      "query": "postgres connection string embeds admin password and infrastructure credentials in source",
+      "rule_ids": ["SEC002"]
+    },
+    "expected_categories": ["SEC002"],
+    "expect_first_category": true,
+    "rubric": "结果第一行的 rule_id 属于 expected_categories 即 pass（sk-007 连接字符串知识的关键词密度最高）"
+  },
+  {
+    "id": "sec-golden-009",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "非安全类规则正例：ORM 循环触发 N+1 查询召回 PERF002（grounded: sk-019，每个 rule_id 至少一个正例）",
+    "input": {
+      "query": "loop over queryset touches lazy-loaded relation per row causing N plus one queries",
+      "rule_ids": ["PERF002"]
+    },
+    "expected_categories": ["PERF002"],
+    "rubric": "任一 rule_id 属于 expected_categories 的结果行存在即 pass"
+  },
+  {
+    "id": "sec-golden-010",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "多 rule_ids 过滤：混合证据在限定规则集 [SEC002, SEC003] 内召回且不泄漏集外类别",
+    "input": {
+      "query": "shell command with interpolated argument leaks api token hardcoded",
+      "rule_ids": ["SEC002", "SEC003"]
+    },
+    "expected_categories": ["SEC002", "SEC003"],
+    "forbidden_categories": ["SEC001", "SEC004", "SEC005"],
+    "rubric": "命中 expected_categories 且结果中无 forbidden_categories 即 pass（IN 过滤语义）"
+  },
+  {
+    "id": "sec-mid-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "库中段知识行（BUG003 id 28/35）仍可召回（embedding 候选 SQL 无 ORDER BY 的 LIMIT 截断回归的中段变体，错题 G）",
+    "input": {
+      "query": "imported modules never referenced in the file inflate namespace and slow import time",
+      "rule_ids": ["BUG003"]
+    },
+    "expected_categories": ["BUG003"],
+    "rubric": "命中 BUG003 即 pass（旧截断 bug 下候选被截到最早写入行，id 28 不可达；SEC005 表尾已由 sec-late-001 覆盖，本 case 补中段）"
+  },
+  {
+    "id": "sec-or-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "rule_ids 过滤下的长查询不再空结果（FTS AND→OR 回归变体：过滤子句不影响 OR 语义）",
+    "input": {
+      "query": "os.system string interpolation shell equals true subprocess argument list injection prevention best practice",
+      "rule_ids": ["SEC003"]
+    },
+    "expected_categories": ["SEC003"],
+    "rubric": "命中 SEC003 即 pass（该 14 token 查询无任何单行包含全部 token，旧 AND 语义下必空；OR 语义下 sk-029 因关键词密集排第一）"
+  },
+  {
+    "id": "sec-empty-002",
+    "group": "challenge",
+    "layer": "deterministic",
+    "description": "rule_ids 过滤后的垃圾查询仍返回 top-k（观察项：embedding 通道无相似度阈值，过滤只缩小泄漏范围）",
+    "input": {
+      "query": "cookbook recipe pancake ingredients breakfast dessert kitchen",
+      "rule_ids": ["SEC004"]
+    },
+    "expected_categories": [],
+    "expected_empty": true,
+    "rubric": "记录返回行数；非空属已知限制（无阈值 + rule_ids 过滤下 embedding 通道仍返回该类别全部行），不设门禁"
+  },
+  {
+    "id": "sec-semantic-003",
+    "group": "challenge",
+    "layer": "semantic",
+    "description": "中文描述反序列化场景召回英文知识（跨语言语义，SEC004；语义层此前只覆盖 SEC001）",
+    "input": {
+      "query": "不可信的数据被直接传入反序列化函数，攻击者可以构造恶意对象在加载时执行任意代码",
+      "rule_ids": null
+    },
+    "expected_categories": ["SEC004"],
+    "rubric": "记录 recall；不作门禁（无关键词命中，纯 embedding 语义层）"
+  },
+  {
     "id": "sec-mrr-001",
     "group": "golden",
     "layer": "deterministic",

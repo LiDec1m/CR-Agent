@@ -99,5 +99,118 @@
     "expected_ids": [],
     "expected_empty": true,
     "rubric": "结果为空即 pass"
+  },
+  {
+    "id": "fb-planner-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "planner.py 真实误报反馈正例召回（push-ad5361c 种子；fb-001 此前仅作为 forbidden 出现）",
+    "input": {
+      "file_path": "src/nodes/planner.py",
+      "symbols": ["chat_json"]
+    },
+    "expected_ids": ["fb-001"],
+    "rubric": "expected_ids 中至少一个被召回即 pass（该文件唯一一条反馈，chat_json 在其 content 中出现）"
+  },
+  {
+    "id": "fb-phrase-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "snake_case 符号按 FTS 短语匹配（unicode61 把下划线当分隔符，符号必须整体作为短语命中而非拆词 AND）",
+    "input": {
+      "file_path": "src/rules/llm_assisted.py",
+      "symbols": ["_SEVERITY_VALUES"]
+    },
+    "expected_ids": ["fb-003"],
+    "rubric": "expected_ids 中至少一个被召回即 pass（_SEVERITY_VALUES 仅出现在 fb-003 的 content 中）"
+  },
+  {
+    "id": "fb-nosym-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "符号列表为空必须返回空（search_feedback 契约：无符号不做第二阶段匹配，不降级为文件级全量召回）",
+    "input": {
+      "file_path": "src/llm/client.py",
+      "symbols": []
+    },
+    "expected_ids": [],
+    "expected_empty": true,
+    "rubric": "结果为空即 pass；client.py 有 3 条匹配 pattern 的反馈（含被排除的 missing），若空符号时降级返回文件级反馈即 fail"
+  },
+  {
+    "id": "fb-wildcard-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "目录通配 pattern 写入侧归一化回归：存量 'src/rules/*' 必须经归一化（→ 'src/rules/'）后仍可召回（修复：5f77a94 在存储边界折叠通配符）",
+    "input": {
+      "file_path": "src/rules/llm_assisted.py",
+      "symbols": ["line_no"]
+    },
+    "expected_ids": ["fb-005"],
+    "rubric": "expected_ids 中至少一个被召回即 pass。旧行为：'src/rules/*' 在等值/前缀语义下永远不匹配任何 file_path，fb-005 不可召回。line_no 仅出现在 fb-005 的 content 中，可精确定位该行（区别于 fb-prefix-001 的 any-hit）"
+  },
+  {
+    "id": "fb-missing-002",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "missing 类型查询期排除回归：即使该行是唯一的 FTS 命中也必须被排除（修复：5ec6a23 引入查询期 feedback_type != 'missing' 过滤）",
+    "input": {
+      "file_path": "src/llm/client.py",
+      "symbols": ["计数"]
+    },
+    "expected_ids": [],
+    "expected_empty": true,
+    "forbidden_ids": ["fb-006"],
+    "rubric": "结果为空且 fb-006 未出现即 pass。'计数' 短语在全部 7 条反馈中仅命中 fb-006 的 content（已验证其 FTS 可命中），空结果完全由类型排除生效；若排除逻辑从查询期移除或写入侧漏报 missing 类型，该 case 失败。区别于 fb-type-001（该例中 fb-002/fb-004 同时命中，fb-006 排除不是必要条件）"
+  },
+  {
+    "id": "fb-boundary-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "前缀按字节精确匹配：'src/rules_' ≠ 'src/rules/'，目录前缀不得串入同名前缀兄弟目录（等值/前缀语义替代旧 LIKE glob 的边界守护）",
+    "input": {
+      "file_path": "src/rules_backup/foo.py",
+      "symbols": ["_validate_llm_evidences"]
+    },
+    "expected_ids": [],
+    "expected_empty": true,
+    "forbidden_ids": ["fb-003", "fb-005"],
+    "rubric": "结果为空即 pass；fb-003（文件级）与 fb-005（src/rules/ 目录前缀）任一出现即 fail。旧 LIKE glob 语义下 '_' 是未转义的单字符通配符，'src/rules_backup' 存在被 'src/rules_*' 类 pattern 串入的风险；符号选 _validate_llm_evidences 使两条 forbidden 行都处于 FTS 可命中状态，隔离失败必然显形"
+  },
+  {
+    "id": "fb-overrecall-001",
+    "group": "challenge",
+    "layer": "deterministic",
+    "description": "已知限制观察项：符号-内容匹配无归因，被顺带提及的符号也会召回主题无关的反馈",
+    "input": {
+      "file_path": "src/rules/llm_assisted.py",
+      "symbols": ["chat_json"]
+    },
+    "expected_ids": ["fb-003"],
+    "rubric": "记录过召回行为，不作门禁：fb-003 的主题是 severity 成员检查误报，chat_json 仅在其兜底论证（'chat_json 的 except Exception 修复重试也已兜底'）中被顺带提及，仍被召回。命中即记录 pass（= 限制仍存在）；将来反馈带符号归因后应升级为 expected_empty 门禁"
+  },
+  {
+    "id": "fb-depth-001",
+    "group": "challenge",
+    "layer": "deterministic",
+    "description": "已知限制观察项：目录前缀对任意深度嵌套的新路径生效，反馈登记时该文件尚不存在",
+    "input": {
+      "file_path": "src/auth/utils/token.py",
+      "symbols": ["login_retry"]
+    },
+    "expected_ids": ["fb-007"],
+    "rubric": "记录前缀过宽行为，不作门禁：fb-007 是 src/auth/* 目录级反馈（归一化为 'src/auth/'），对后续新增的深层嵌套文件同样生效，且符号匹配无法区分 login_retry 属于哪个文件。命中即记录 pass（= 限制仍存在）"
+  },
+  {
+    "id": "fb-rank-001",
+    "group": "challenge",
+    "layer": "deterministic",
+    "description": "已知限制观察项：公共符号命中多条反馈且无相关性阈值，bm25 只按词频排序不按相关主题",
+    "input": {
+      "file_path": "src/llm/client.py",
+      "symbols": ["chat_json"]
+    },
+    "expected_ids": ["fb-002", "fb-004"],
+    "rubric": "记录召回面，不作门禁：chat_json 同时命中 fb-002（unused_import 误报）与 fb-004（magic_number 误报）两条不同主题的反馈，当前 bm25 排序为 fb-004 在前（短文档占优）。expected_ids 至少一个被召回即记录 pass；将来引入相关性阈值或主题过滤时，此 case 是升级为门禁的基线"
   }
 ]

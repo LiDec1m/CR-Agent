@@ -83,5 +83,109 @@
     "expect_exact_order": true,
     "match_source": "diff_file",
     "rubric": "diff_file 来源结果的 id 序列严格递增即 pass"
+  },
+  {
+    "id": "cb-complete-003",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "9 符号文件（pydantic state 模型）路径等值查询必须全量返回：DiffLine..AgentState 全部 9 个类符号",
+    "input": {
+      "file_path": "src/models/state.py"
+    },
+    "expected_ids": ["cb-186", "cb-187", "cb-188", "cb-189", "cb-190", "cb-191", "cb-192", "cb-193", "cb-194"],
+    "expect_exact_order": true,
+    "rubric": "diff_file 来源结果覆盖 expected_ids 全部 9 个类符号且按 id 升序即 pass"
+  },
+  {
+    "id": "cb-crossfile-002",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "import 解析多目标：test_rag.py 同时依赖 src/rag/retriever.py 与 src/rag/indexer.py，两者都应以 cross_file 召回",
+    "input": {
+      "file_path": "tests/test_rag.py"
+    },
+    "expected_cross_file_paths": ["src/rag/retriever.py", "src/rag/indexer.py"],
+    "expect_all_cross_file_paths": true,
+    "rubric": "cross_file 来源结果必须同时包含 src/rag/retriever.py 和 src/rag/indexer.py；缺任一目标即 fail"
+  },
+  {
+    "id": "cb-single-001",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "双类符号文件（LLMClient + EmbeddingClient）等值查询完整性：两个类都要返回，不得只回一个",
+    "input": {
+      "file_path": "src/llm/client.py"
+    },
+    "expected_ids": ["cb-161", "cb-162"],
+    "expect_exact_order": true,
+    "rubric": "diff_file 来源结果恰好包含 cb-161、cb-162 两个 key 且按 id 升序即 pass"
+  },
+  {
+    "id": "cb-reg-limit5-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "回归：旧实现 FTS rank + LIMIT 5 任意丢符号——main.py 有 7 个符号，旧实现只回前 5 个，feedback/index 命令函数（cb-006/cb-007）被静默丢弃，落在这些函数里的 hunk 拿不到 AST 富化。修复后等值查询必须全量返回",
+    "input": {
+      "file_path": "main.py"
+    },
+    "expected_ids": ["cb-001", "cb-002", "cb-003", "cb-004", "cb-005", "cb-006", "cb-007"],
+    "expect_exact_order": true,
+    "rubric": "diff_file 来源结果覆盖全部 7 个符号（旧 LIMIT 5 会丢 cb-006/cb-007）且按 id 升序即 pass"
+  },
+  {
+    "id": "cb-reg-limit5-002",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "回归：16 符号测试文件在旧 LIMIT 5 行为下只回 5 个符号（丢 11 个测试函数），修复后必须全量返回",
+    "input": {
+      "file_path": "tests/test_nodes.py"
+    },
+    "expected_ids": ["cb-021", "cb-022", "cb-023", "cb-024", "cb-025", "cb-026", "cb-027", "cb-028", "cb-029", "cb-030", "cb-031", "cb-032", "cb-033", "cb-034", "cb-035", "cb-036"],
+    "expect_exact_order": true,
+    "rubric": "diff_file 来源结果覆盖全部 16 个符号（旧 LIMIT 5 只回 5 个）且按 id 升序即 pass"
+  },
+  {
+    "id": "cb-reg-similarpath-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "回归：相似路径隔离——旧 FTS MATCH 按路径分词（src/rag/retriever.py 与 src/rag/indexer.py 共享 src、rag 词元）可能把同目录兄弟文件混入 diff_file 结果。等值查询后，查询 retriever.py 时 indexer.py 不得以 diff_file 身份出现",
+    "input": {
+      "file_path": "src/rag/retriever.py"
+    },
+    "forbidden_other_files": true,
+    "rubric": "source=diff_file 的每行 file_path 都等于 src/rag/retriever.py（不得混入 indexer.py 等相似路径）即 pass"
+  },
+  {
+    "id": "cb-reg-imports-fallback-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "回归：预迁移库回退行为——resolved_imports 列不存在（评测 seed 即此形态）时，必须回退到查询期 _resolve_import_path 运行时解析，test_diff_parser.py 的 import src.parsers.diff_parser 仍应解析出 src/parsers/diff_parser.py",
+    "input": {
+      "file_path": "tests/test_diff_parser.py"
+    },
+    "expected_cross_file_paths": ["src/parsers/diff_parser.py"],
+    "rubric": "存在 source=cross_file 且 file_path=src/parsers/diff_parser.py 的结果即 pass（运行时 import 解析回退未被破坏）"
+  },
+  {
+    "id": "cb-chal-fanout-001",
+    "group": "challenge",
+    "layer": "deterministic",
+    "description": "观察项：main.py 的跨文件扇出——一级 import 解析出 9 个依赖文件（config/settings.py、src/graph.py、src/llm/client.py、src/memory/*、src/parsers/diff_parser.py、src/rag/*、src/rules/llm_assisted.py），且只展开一层：cross_file 取回的 src/graph.py 自身依赖不再递归解析。记录返回规模，不设门禁",
+    "input": {
+      "file_path": "main.py"
+    },
+    "expected_ids": "OBSERVE",
+    "observe_expected": 7,
+    "rubric": "记录 diff_file 返回数（预期 7）及 cross_file 扇出（9 文件、单层不递归）；属已知限制观察，非 fail"
+  },
+  {
+    "id": "cb-chal-bigsymbol-001",
+    "group": "challenge",
+    "layer": "deterministic",
+    "description": "观察项：超大符号体——src/rag/retriever.py 整个文件是单个类 RAGRetriever（行 12-719，约 700 行），以一行结果整体返回、不切分。记录返回形态，不设门禁",
+    "input": {
+      "file_path": "src/rag/retriever.py"
+    },
+    "rubric": "记录 diff_file 返回数（预期 1）及单符号体量；符号级粒度过粗属已知限制，非 fail"
   }
 ]

@@ -237,9 +237,11 @@ def run_codebase(handle, key_to_rowid: dict, case: dict) -> CaseResult:
 
     if expected == "OBSERVE":
         n = len(diff_file)
+        cross_paths = sorted({r.get("file_path") for r in cross})
         return CaseResult(
             case["id"], "codebase", case["group"], case["layer"], "observe",
-            f"diff_file rows={n} (cap observation, expected ~{case.get('observe_expected')})",
+            f"diff_file rows={n} (expected ~{case.get('observe_expected')}), "
+            f"cross_file rows={len(cross)}, paths={cross_paths[:10]}",
         )
     if expected == "ALL":
         want = case.get("expected_file_symbol_count")
@@ -252,11 +254,12 @@ def run_codebase(handle, key_to_rowid: dict, case: dict) -> CaseResult:
     if case.get("expected_cross_file_paths"):
         want = set(case["expected_cross_file_paths"])
         got = {r.get("file_path") for r in cross}
-        ok = bool(got & want)
+        ok = want <= got if case.get("expect_all_cross_file_paths") else bool(got & want)
+        relation = "all required" if case.get("expect_all_cross_file_paths") else "any required"
         return CaseResult(
             case["id"], "codebase", case["group"], case["layer"],
             "pass" if ok else "fail",
-            f"cross_file paths={sorted(got)[:5]}",
+            f"cross_file paths={sorted(got)[:5]} ({relation})",
         )
     if case.get("forbidden_other_files"):
         bad = {r.get("file_path") for r in diff_file} - {inp["file_path"]}
@@ -338,6 +341,8 @@ def _judge_id_results(handle_case: dict, results: list[dict],
             break
     if case.get("expect_first"):
         ok = bool(got_keys) and got_keys[0] in want
+    elif case.get("expect_all_ids"):
+        ok = want <= set(got_keys) and not bad
     else:
         ok = bool(hit) and not bad
     return CaseResult(case["id"], channel, case["group"], case["layer"],
@@ -409,6 +414,17 @@ def main() -> int:
                 except Exception as exc:  # noqa: BLE001
                     res = CaseResult(case["id"], channel, case["group"],
                                      case["layer"], "fail", f"EXCEPTION: {exc}")
+                # Deterministic challenge cases document current boundaries
+                # rather than define release criteria. Preserve their retrieval
+                # detail but render them uniformly as observations. Semantic
+                # challenges retain pass/fail so their recall can be aggregated.
+                if (
+                    case["group"] == "challenge"
+                    and case["layer"] == "deterministic"
+                    and res.status in {"pass", "fail"}
+                    and not res.detail.startswith("EXCEPTION:")
+                ):
+                    res.status = "observe"
                 all_results.append(res)
 
     # ---- Aggregate & report ----

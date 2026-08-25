@@ -121,5 +121,120 @@
     "expected_ids": ["pr-036"],
     "expect_first": true,
     "rubric": "expected_ids[0] 是结果第一名即 pass"
+  },
+  {
+    "id": "hist-golden-004",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "同文件双线程历史召回（app/auth.py SQL 注入 + 硬编码密钥真实样本）",
+    "input": {
+      "query": "app/auth.py     query = \"SELECT * FROM users WHERE name = '\" + username + \"'\"     cursor.execute(query)     api_key = \"sk-22064164576979611648\"",
+      "file_pattern": "app/auth.py"
+    },
+    "expected_ids": ["pr-002", "pr-004"],
+    "expect_all_ids": true,
+    "rubric": "同文件两次分析（不同 thread）的历史 pr-002、pr-004 都必须可达；任一缺失即 fail"
+  },
+  {
+    "id": "hist-golden-005",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "硬编码密钥历史召回且排第一（db/queries.py 真实样本，单行文件）",
+    "input": {
+      "query": "db/queries.py     API_KEY = \"sk-1234567890abcdef123456\"     password = \"admin_password_2024\"     os.system(\"echo \" + user_input)",
+      "file_pattern": "db/queries.py"
+    },
+    "expected_ids": ["pr-001"],
+    "expect_first": true,
+    "rubric": "expected_ids[0] 是结果第一名即 pass（该文件仅一条历史，命中却排名靠后说明串入了其它文件行）"
+  },
+  {
+    "id": "hist-golden-006",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "不安全反序列化 / eval 历史召回（app/handler.py 真实样本）",
+    "input": {
+      "query": "app/handler.py     user_data = pickle.loads(request.body)     eval(request.params.get(\"action\"))     return user_data",
+      "file_pattern": "app/handler.py"
+    },
+    "expected_ids": ["pr-003", "pr-005"],
+    "expect_all_ids": true,
+    "rubric": "同一文件的两条不安全反序列化/eval 历史 pr-003、pr-005 都必须可达；任一缺失即 fail"
+  },
+  {
+    "id": "hist-golden-007",
+    "group": "golden",
+    "layer": "deterministic",
+    "description": "仅凭 risk_titles 关键词召回（diff_summary 之外的第二个 FTS 列）",
+    "input": {
+      "query": "Hardcoded Secrets Detected Potential SQL Injection Vulnerability Command Injection Risk Insecure Deserialization",
+      "file_pattern": null
+    },
+    "expected_ids": ["pr-001"],
+    "expect_first": true,
+    "rubric": "查询不含 file_path 或 diff_summary 词元，只含 pr-001 的 risk_titles 词元；expected_ids[0] 排第一即 pass。若 risk_titles 未写入 FTS 或 embedding 输入，竞争行将不再被标题词区分"
+  },
+  {
+    "id": "hist-late-003",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "7 行同文件历史的最晚写入行仍排第一（候选池截断 + top_k=10 双重压力，错题 G 第三例）",
+    "input": {
+      "query": "tests/test_nodes.py     assert result[\"pending_tools\"] == [\"magic_number\"]",
+      "file_pattern": "tests/test_nodes.py"
+    },
+    "expected_ids": ["pr-026"],
+    "expect_first": true,
+    "rubric": "expected_ids[0] 是结果第一名即 pass（旧行为：LIMIT 窗口只覆盖最早写入的行；该行在表内第 26 位写入，且同文件共 7 行全部竞争 top_k=10）"
+  },
+  {
+    "id": "hist-empty-002",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "diff_summary 为空的历史行仍可召回且排第一（embedding 输入 = file_path + diff_summary + risk_titles 契约）",
+    "input": {
+      "query": "src/nodes/reflection.py Unvalidated plan passed as pending_tools",
+      "file_pattern": "src/nodes/reflection.py"
+    },
+    "expected_ids": ["pr-011"],
+    "expect_first": true,
+    "rubric": "expected_ids[0] 是结果第一名即 pass（pr-011 的 diff_summary 为空；若写入侧 embedding 输入丢掉 risk_titles 或空摘要破坏 FTS 同步，该行将不可召回）"
+  },
+  {
+    "id": "hist-pattern-001",
+    "group": "regression",
+    "layer": "deterministic",
+    "description": "通配符 file_pattern（src/*.py → LIKE src/%.py）召回目标行且不泄漏非 src 文件历史",
+    "input": {
+      "query": "src/rules/llm_assisted.py             # Severity is guaranteed valid by _validate_llm_evidences; the",
+      "file_pattern": "src/*.py"
+    },
+    "expected_ids": ["pr-034"],
+    "forbidden_ids": ["pr-001", "pr-002", "pr-006", "pr-027"],
+    "rubric": "命中 pr-034 且 forbidden_ids（app/db/README 等非 src 前缀文件的历史）无一出现即 pass；若通配符 * → % 转换或 FTS JOIN 侧 file_path 过滤回归，此 case 失败"
+  },
+  {
+    "id": "hist-garbage-001",
+    "group": "challenge",
+    "layer": "deterministic",
+    "description": "零词面重叠垃圾查询仍返回该文件全部历史（embedding 通道无相似度阈值，已知限制观察项）",
+    "input": {
+      "query": "qqqzzz frobnicate blorptasticwidget nonlexicalxyzzy",
+      "file_pattern": "src/llm/client.py"
+    },
+    "expected_ids": ["pr-031"],
+    "rubric": "记录过召回行为，不作门禁：查询与任何行零词元重叠，embedding 腿仍把全部 3 条 client.py 历史以 0 相似度送进 RRF 并返回。命中 pr-031 即记录为 pass（= 限制仍存在）；将来加相似度阈值后应升级为 expected_empty 门禁"
+  },
+  {
+    "id": "hist-semantic-003",
+    "group": "challenge",
+    "layer": "semantic",
+    "description": "中英跨语言语义召回（README 中文摘要 ↔ 英文改写查询，依赖真实 embedding）",
+    "input": {
+      "query": "README.md hybrid deterministic and probabilistic architecture: 21 AST and regex deterministic rules provide an explainable evidence chain, LLM performs high-level semantic judgment",
+      "file_pattern": "README.md"
+    },
+    "expected_ids": ["pr-027"],
+    "rubric": "记录 recall；不作门禁（FTS 对中英词面零重叠，唯一通道是真实 embedding 的跨语言语义，离线 fake embedding 必然失败，故只在 --live 运行）"
   }
 ]
